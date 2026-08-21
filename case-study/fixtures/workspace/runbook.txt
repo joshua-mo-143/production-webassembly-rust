@@ -1,0 +1,1 @@
+Deployments require review, a bounded rollout, and a health check.

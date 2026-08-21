@@ -30,7 +30,8 @@ jobs:
           -p ch04-guest -p ch05-guest -p ch06-guest
           -p ch07-guest -p ch08-guest -p ch10-guest
           -p ch11-plugin-v1 -p ch11-plugin-v1-1 -p ch12-guest
-          -p ch13-catalog -p ch13-renderer --
+          -p ch13-catalog -p ch13-renderer
+          -p ch14-normalizer -p ch14-workspace-reader --
           -D warnings -A clippy::same-length-and-capacity
 
       - name: Build component guests
@@ -38,7 +39,8 @@ jobs:
           cargo build --target wasm32-wasip2 \
             -p ch04-guest -p ch05-guest -p ch07-guest -p ch08-guest \
             -p ch10-guest -p ch11-plugin-v1 -p ch11-plugin-v1-1 \
-            -p ch12-guest -p ch13-catalog -p ch13-renderer
+            -p ch12-guest -p ch13-catalog -p ch13-renderer \
+            -p ch14-normalizer -p ch14-workspace-reader
           cargo build --release --target wasm32-wasip2 -p ch06-guest
 
       - name: Run workspace tests
@@ -81,6 +83,11 @@ jobs:
           CH13_RENDERER: target/wasm32-wasip2/debug/ch13_renderer.wasm
         run: cargo test -p ch13-host --test composition -- --ignored
 
+      - name: Run Chapter 14 secure runtime tests
+        run: |
+          cargo run -p ch14-host -- provision
+          cargo test -p ch14-host --test secure_runtime -- --ignored
+
       - name: Run documented examples
         run: |
           cargo run -p ch04-host
@@ -93,3 +100,4 @@ jobs:
           cargo run -p ch11-host
           cargo run -p ch12-host
           cargo run -p ch13-host
+          cargo run -p ch14-host -- run

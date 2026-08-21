@@ -1,0 +1,40 @@
+package book:secure-agent-tools@1.0.0;
+
+interface normalizer {
+    enum operation {
+        normalize,
+        burn-fuel,
+        grow-memory,
+        invalid-output,
+    }
+
+    record request {
+        operation: operation,
+        text: string,
+        amount: u32,
+    }
+
+    record normalized {
+        text: string,
+        word-count: u32,
+    }
+
+    normalize: func(request: request) -> result<normalized, string>;
+}
+
+interface workspace-reader {
+    record document {
+        path: string,
+        contents: string,
+    }
+
+    read: func(path: string) -> result<document, string>;
+}
+
+world normalizer-tool {
+    export normalizer;
+}
+
+world workspace-reader-tool {
+    export workspace-reader;
+}

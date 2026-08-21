@@ -63,7 +63,8 @@ README.
 | 11 | Available | [Plugin system](examples/ch11-plugin-system/) |
 | 12 | Available | [Agent tool boundary](examples/ch12-agent-tools/) |
 | 13 | Available | [Component composition](examples/ch13-components/) |
-| 14 onward | Not available | — |
+| 14 | Available | [Secure agent runtime case study](case-study/) |
+| 15 onward | Not available | — |
 
 ## Repository checks
 
@@ -74,13 +75,17 @@ cargo clippy --target wasm32-wasip2 \
  -p ch04-guest -p ch05-guest -p ch06-guest \
  -p ch07-guest -p ch08-guest -p ch10-guest \
  -p ch11-plugin-v1 -p ch11-plugin-v1-1 -p ch12-guest \
- -p ch13-catalog -p ch13-renderer -- \
+ -p ch13-catalog -p ch13-renderer \
+ -p ch14-normalizer -p ch14-workspace-reader -- \
  -D warnings -A clippy::same-length-and-capacity
 cargo build --target wasm32-wasip2 \
  -p ch04-guest -p ch05-guest -p ch07-guest -p ch08-guest \
  -p ch10-guest -p ch11-plugin-v1 -p ch11-plugin-v1-1 \
- -p ch12-guest -p ch13-catalog -p ch13-renderer
+ -p ch12-guest -p ch13-catalog -p ch13-renderer \
+ -p ch14-normalizer -p ch14-workspace-reader
 cargo build --release --target wasm32-wasip2 -p ch06-guest
+cargo run -p ch14-host -- provision
+cargo test -p ch14-host --test secure_runtime -- --ignored
 cargo test --workspace
 ```
 

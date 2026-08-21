@@ -20,6 +20,9 @@ members = [
     "examples/ch13-components/catalog",
     "examples/ch13-components/renderer",
     "examples/ch13-components/host",
+    "case-study/normalizer",
+    "case-study/workspace-reader",
+    "case-study/host",
 ]
 resolver = "3"
 
