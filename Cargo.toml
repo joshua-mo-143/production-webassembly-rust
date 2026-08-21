@@ -15,6 +15,11 @@ members = [
     "examples/ch11-plugin-system/plugin-v1",
     "examples/ch11-plugin-system/plugin-v1-1",
     "examples/ch11-plugin-system/host",
+    "examples/ch12-agent-tools/guest",
+    "examples/ch12-agent-tools/host",
+    "examples/ch13-components/catalog",
+    "examples/ch13-components/renderer",
+    "examples/ch13-components/host",
 ]
 resolver = "3"
 

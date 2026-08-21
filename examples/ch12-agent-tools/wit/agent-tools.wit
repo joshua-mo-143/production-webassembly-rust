@@ -1,0 +1,31 @@
+package book:agent-tools@1.0.0;
+
+interface preprocessing {
+    enum operation {
+        normalize,
+        burn-fuel,
+        grow-memory,
+    }
+
+    record request {
+        operation: operation,
+        text: string,
+        amount: u32,
+    }
+
+    variant rejection {
+        empty,
+        too-long(u32),
+    }
+
+    record prepared {
+        text: string,
+        token-estimate: u32,
+    }
+
+    preprocess: func(input: request) -> result<prepared, rejection>;
+}
+
+world agent-tool-logic {
+    export preprocessing;
+}

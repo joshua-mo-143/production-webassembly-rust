@@ -1,0 +1,38 @@
+package book:composition@1.0.0;
+
+interface domain {
+    variant availability {
+        in-stock(u32),
+        back-order(string),
+        discontinued,
+    }
+
+    record product {
+        sku: string,
+        name: string,
+        availability: availability,
+    }
+
+    variant lookup-error {
+        invalid-sku,
+        not-found,
+    }
+}
+
+interface catalog {
+    use domain.{product, lookup-error};
+    lookup: func(sku: string) -> result<product, lookup-error>;
+}
+
+interface renderer {
+    use domain.{product};
+    render: func(product: product) -> result<string, string>;
+}
+
+world catalog-component {
+    export catalog;
+}
+
+world renderer-component {
+    export renderer;
+}

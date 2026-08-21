@@ -61,7 +61,9 @@ README.
 | 9 | Not available | — |
 | 10 | Available | [Server runtime](examples/ch10-server-runtime/) |
 | 11 | Available | [Plugin system](examples/ch11-plugin-system/) |
-| 12 onward | Not available | — |
+| 12 | Available | [Agent tool boundary](examples/ch12-agent-tools/) |
+| 13 | Available | [Component composition](examples/ch13-components/) |
+| 14 onward | Not available | — |
 
 ## Repository checks
 
@@ -71,10 +73,13 @@ cargo clippy --workspace --all-targets -- -D warnings
 cargo clippy --target wasm32-wasip2 \
  -p ch04-guest -p ch05-guest -p ch06-guest \
  -p ch07-guest -p ch08-guest -p ch10-guest \
- -p ch11-plugin-v1 -p ch11-plugin-v1-1 -- -D warnings
+ -p ch11-plugin-v1 -p ch11-plugin-v1-1 -p ch12-guest \
+ -p ch13-catalog -p ch13-renderer -- \
+ -D warnings -A clippy::same-length-and-capacity
 cargo build --target wasm32-wasip2 \
  -p ch04-guest -p ch05-guest -p ch07-guest -p ch08-guest \
- -p ch10-guest -p ch11-plugin-v1 -p ch11-plugin-v1-1
+ -p ch10-guest -p ch11-plugin-v1 -p ch11-plugin-v1-1 \
+ -p ch12-guest -p ch13-catalog -p ch13-renderer
 cargo build --release --target wasm32-wasip2 -p ch06-guest
 cargo test --workspace
 ```

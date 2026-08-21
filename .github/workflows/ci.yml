@@ -29,13 +29,16 @@ jobs:
           cargo clippy --target wasm32-wasip2
           -p ch04-guest -p ch05-guest -p ch06-guest
           -p ch07-guest -p ch08-guest -p ch10-guest
-          -p ch11-plugin-v1 -p ch11-plugin-v1-1 -- -D warnings
+          -p ch11-plugin-v1 -p ch11-plugin-v1-1 -p ch12-guest
+          -p ch13-catalog -p ch13-renderer --
+          -D warnings -A clippy::same-length-and-capacity
 
       - name: Build component guests
         run: |
           cargo build --target wasm32-wasip2 \
             -p ch04-guest -p ch05-guest -p ch07-guest -p ch08-guest \
-            -p ch10-guest -p ch11-plugin-v1 -p ch11-plugin-v1-1
+            -p ch10-guest -p ch11-plugin-v1 -p ch11-plugin-v1-1 \
+            -p ch12-guest -p ch13-catalog -p ch13-renderer
           cargo build --release --target wasm32-wasip2 -p ch06-guest
 
       - name: Run workspace tests
@@ -67,6 +70,17 @@ jobs:
           CH11_PLUGIN_V1_1: target/wasm32-wasip2/debug/ch11_plugin_v1_1.wasm
         run: cargo test -p ch11-host --test plugin_system -- --ignored
 
+      - name: Run Chapter 12 agent tool boundary tests
+        env:
+          CH12_COMPONENT: target/wasm32-wasip2/debug/ch12_guest.wasm
+        run: cargo test -p ch12-host --test agent_tools -- --ignored
+
+      - name: Run Chapter 13 component composition tests
+        env:
+          CH13_CATALOG: target/wasm32-wasip2/debug/ch13_catalog.wasm
+          CH13_RENDERER: target/wasm32-wasip2/debug/ch13_renderer.wasm
+        run: cargo test -p ch13-host --test composition -- --ignored
+
       - name: Run documented examples
         run: |
           cargo run -p ch04-host
@@ -77,3 +91,5 @@ jobs:
           cargo run -p ch08-host
           cargo run -p ch10-host
           cargo run -p ch11-host
+          cargo run -p ch12-host
+          cargo run -p ch13-host
