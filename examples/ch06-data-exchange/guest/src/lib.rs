@@ -28,7 +28,9 @@ fn decode_and_sum(bytes: &[u8]) -> Result<f64, String> {
     }
 
     Ok(bytes
-        .chunks_exact(16)
+        .as_chunks::<16>()
+        .0
+        .iter()
         .map(|chunk| {
             let value_bytes: [u8; 8] = chunk[8..16].try_into().expect("chunk is 16 bytes");
             f64::from_le_bytes(value_bytes)
