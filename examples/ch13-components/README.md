@@ -1,6 +1,6 @@
 # Chapter 13: typed Component Model composition
 
-Stable book link:
+Development-branch repository link:
 <https://github.com/joshua-mo-143/production-webassembly-rust/tree/main/examples/ch13-components>
 
 Two independently built components share the versioned

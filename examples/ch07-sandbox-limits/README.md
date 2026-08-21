@@ -1,6 +1,6 @@
 # Chapter 7: sandbox controls and limits
 
-Stable book link:
+Development-branch repository link:
 <https://github.com/joshua-mo-143/production-webassembly-rust/tree/main/examples/ch07-sandbox-limits>
 
 The guest supplies CPU-bound work, a large allocation, a deliberate panic, and

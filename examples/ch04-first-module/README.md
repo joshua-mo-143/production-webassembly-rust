@@ -1,5 +1,8 @@
 # Chapter 4: your first Rust component
 
+Development-branch repository link:
+<https://github.com/joshua-mo-143/production-webassembly-rust/tree/main/examples/ch04-first-module>
+
 `wit/world.wit` is the contract. `guest` implements it and stable Rust emits a
 WebAssembly component directly. `host` uses Wasmtime's generated typed bindings
 to load that artifact and invoke `greet`.

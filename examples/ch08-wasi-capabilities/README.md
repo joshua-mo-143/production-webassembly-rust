@@ -1,6 +1,6 @@
 # Chapter 8: least-privilege WASI capabilities
 
-Stable book link:
+Development-branch repository link:
 <https://github.com/joshua-mo-143/production-webassembly-rust/tree/main/examples/ch08-wasi-capabilities>
 
 The host creates two temporary directories but preopens only one as the guest's

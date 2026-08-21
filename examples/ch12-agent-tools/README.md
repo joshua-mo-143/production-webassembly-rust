@@ -1,6 +1,6 @@
 # Chapter 12: secure AI-agent tool boundaries
 
-Stable book link:
+Development-branch repository link:
 <https://github.com/joshua-mo-143/production-webassembly-rust/tree/main/examples/ch12-agent-tools>
 
 This example accepts a representative JSON tool request without calling a
@@ -89,5 +89,5 @@ low-detail boundary error.
 
 For the component security model, see the stable
 [WebAssembly Component Model repository](https://github.com/WebAssembly/component-model).
-For Wasmtime resource limiting, see the
-[Wasmtime crate documentation](https://docs.rs/wasmtime/48.0.0/wasmtime/struct.Store.html).
+For Wasmtime resource limiting, see the pinned
+[Wasmtime v48.0.0 `Store` source](https://github.com/bytecodealliance/wasmtime/blob/v48.0.0/crates/wasmtime/src/runtime/store.rs).

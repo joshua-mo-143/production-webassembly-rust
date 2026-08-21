@@ -1,5 +1,8 @@
 # Chapter 14 case study: a secure AI-agent tool runtime
 
+Development-branch repository link:
+<https://github.com/joshua-mo-143/production-webassembly-rust/tree/main/case-study>
+
 This case study combines the book's stable WIT boundary, typed data exchange,
 resource containment, capability-based WASI, fresh-store request isolation,
 authenticated plug-in loading, host-owned agent policy, and multi-component
@@ -10,19 +13,19 @@ there are no network calls or external services.
 
 ```mermaid
 flowchart LR
-    F[Deterministic model fixture] --> P[Host parser<br/>deny unknown fields]
-    P --> G[Host policy<br/>tool and capability grants]
-    M[Signed manifest] --> V[Ed25519 verification]
-    K[Trusted public key] --> V
-    C[Wasm component bytes] --> H[SHA-256 artefact verification]
+    F["Deterministic model fixture"] --> P["Host parser<br/>deny unknown fields"]
+    P --> G["Host policy<br/>tool and capability grants"]
+    M["Signed manifest"] --> V["Ed25519 verification"]
+    K["Trusted public key"] --> V
+    C["Wasm component bytes"] --> H["SHA-256 artefact verification"]
     V --> H --> G
-    G -->|no filesystem| N[Normalizer component<br/>WIT 1.0.0]
-    G -->|read-only /workspace| R[Workspace reader component<br/>WIT 1.0.0]
-    N --> O[Host output validation]
+    G -->|"no filesystem"| N["Normalizer component<br/>WIT 1.0.0"]
+    G -->|"read-only /workspace"| R["Workspace reader component<br/>WIT 1.0.0"]
+    N --> O["Host output validation"]
     R --> O
-    Q[Host-only credential] --> G
-    O --> U[Bounded public result]
-    P --> E[Structured internal events]
+    Q["Host-only credential"] --> G
+    O --> U["Bounded public result"]
+    P --> E["Structured internal events"]
     G --> E
     O --> E
 ```
@@ -41,7 +44,7 @@ canonical serialized payload, and writes `target/ch14/manifest.json`. Loading
 first verifies the signature against the separately supplied public key, then
 checks manifest policy, safe relative artefact paths, SHA-256 digests, and WIT
 compatibility. See the pinned
-[Wasmtime 48.0.0 API](https://docs.rs/wasmtime/48.0.0/wasmtime/) and
+[Wasmtime v48.0.0 source](https://github.com/bytecodealliance/wasmtime/tree/v48.0.0/crates/wasmtime) and
 [ed25519-dalek 2.2.0 API](https://docs.rs/ed25519-dalek/2.2.0/ed25519_dalek/).
 The implementation references stable GitHub tags for
 [Wasmtime v48.0.0](https://github.com/bytecodealliance/wasmtime/tree/v48.0.0)

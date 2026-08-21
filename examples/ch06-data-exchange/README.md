@@ -1,5 +1,8 @@
 # Chapter 6: host–guest data exchange
 
+Development-branch repository link:
+<https://github.com/joshua-mo-143/production-webassembly-rust/tree/main/examples/ch06-data-exchange>
+
 This component exposes the same calculation through two boundary designs:
 
 1. `list<sample>` uses typed WIT records. It is self-describing, generated

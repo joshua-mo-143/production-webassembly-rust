@@ -1,6 +1,6 @@
 # Chapter 10: embedding components in a server runtime
 
-Stable book link:
+Development-branch repository link:
 <https://github.com/joshua-mo-143/production-webassembly-rust/tree/main/examples/ch10-server-runtime>
 
 `ServerRuntime::load` compiles the component once into Wasmtime's in-memory

@@ -1,6 +1,6 @@
 # Chapter 11: a verified third-party plugin system
 
-Stable book link:
+Development-branch repository link:
 <https://github.com/joshua-mo-143/production-webassembly-rust/tree/main/examples/ch11-plugin-system>
 
 The contract is the versioned WIT package `book:plugin@1.0.0`. The host

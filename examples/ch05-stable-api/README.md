@@ -1,5 +1,8 @@
 # Chapter 5: a stable, versioned interface
 
+Development-branch repository link:
+<https://github.com/joshua-mo-143/production-webassembly-rust/tree/main/examples/ch05-stable-api>
+
 The shared contract is `wit/stable-api.wit`, whose package identity is
 `book:stable-api@1.0.0`. The guest and host are separate crates and both
 generate bindings from that contract. The host also checks the guest's reported
