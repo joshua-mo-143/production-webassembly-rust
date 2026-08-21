@@ -200,15 +200,12 @@ impl SecureAgentRuntime {
 
         let normalizer_entry = manifest_tool(&envelope.signed, "normalize")?;
         let reader_entry = manifest_tool(&envelope.signed, "workspace-read")?;
-        let normalizer_path = verified_artifact(repository_root, normalizer_entry)?;
-        let reader_path = verified_artifact(repository_root, reader_entry)?;
-
         let mut config = Config::new();
         config.wasm_component_model(true);
         config.consume_fuel(true);
         let engine = Engine::new(&config)?;
-        let normalizer = Component::from_file(&engine, normalizer_path)?;
-        let reader = Component::from_file(&engine, reader_path)?;
+        let normalizer = verified_component(repository_root, normalizer_entry, &engine)?;
+        let reader = verified_component(repository_root, reader_entry, &engine)?;
         let mut normalizer_linker = Linker::new(&engine);
         wasmtime_wasi::p2::add_to_linker_sync(&mut normalizer_linker)?;
         let mut reader_linker = Linker::new(&engine);
@@ -548,7 +545,20 @@ fn validate_manifest(payload: &SignedPayload) -> Result<()> {
     Ok(())
 }
 
-fn verified_artifact(repository_root: &Path, tool: &ToolManifest) -> Result<PathBuf> {
+fn verified_component(
+    repository_root: &Path,
+    tool: &ToolManifest,
+    engine: &Engine,
+) -> Result<Component> {
+    verified_component_with_hook(repository_root, tool, engine, |_| {})
+}
+
+fn verified_component_with_hook(
+    repository_root: &Path,
+    tool: &ToolManifest,
+    engine: &Engine,
+    after_verification: impl FnOnce(&Path),
+) -> Result<Component> {
     let relative = Path::new(&tool.artifact);
     if relative.is_absolute()
         || relative
@@ -562,11 +572,13 @@ fn verified_artifact(repository_root: &Path, tool: &ToolManifest) -> Result<Path
     if !artifact.starts_with(&root) {
         bail!("artifact escaped repository");
     }
-    let digest = hex_encode(&Sha256::digest(fs::read(&artifact)?));
+    let bytes = fs::read(&artifact)?;
+    let digest = hex_encode(&Sha256::digest(&bytes));
     if digest != tool.sha256 {
         bail!("artifact digest mismatch");
     }
-    Ok(artifact)
+    after_verification(&artifact);
+    Component::new(engine, &bytes).map_err(Into::into)
 }
 
 fn verify_envelope(envelope: &ManifestEnvelope, public_key_path: &Path) -> Result<()> {
@@ -678,7 +690,16 @@ fn hex_encode(bytes: &[u8]) -> String {
 
 #[cfg(test)]
 mod tests {
-    use super::{RuntimeError, validate_relative_path, validate_text};
+    use std::fs;
+    use std::path::Path;
+
+    use sha2::{Digest, Sha256};
+    use wasmtime::{Config, Engine};
+
+    use super::{
+        RuntimeError, ToolManifest, hex_encode, validate_relative_path, validate_text,
+        verified_component_with_hook,
+    };
 
     #[test]
     fn host_validation_rejects_control_text_and_unsafe_paths() {
@@ -706,5 +727,50 @@ mod tests {
             RuntimeError::ResourceLimit.to_string(),
             "tool request failed"
         );
+    }
+
+    #[test]
+    #[ignore = "requires the ch14 normalizer artifact; see case-study/README.md"]
+    fn verified_bytes_are_compiled_when_the_path_changes_after_verification() {
+        let repository = tempfile::tempdir().expect("create temporary repository");
+        let artifact_name = "normalizer.wasm";
+        let artifact_path = repository.path().join(artifact_name);
+        fs::copy(
+            workspace_root().join("target/wasm32-wasip2/debug/ch14_normalizer.wasm"),
+            &artifact_path,
+        )
+        .expect("copy built normalizer");
+        let verified_bytes = fs::read(&artifact_path).expect("read copied normalizer");
+        let tool = ToolManifest {
+            name: "normalize".to_owned(),
+            interface: "book:secure-agent-tools/normalizer@1.0.0".to_owned(),
+            artifact: artifact_name.to_owned(),
+            sha256: hex_encode(&Sha256::digest(&verified_bytes)),
+            capabilities: Vec::new(),
+        };
+        let mut config = Config::new();
+        config.wasm_component_model(true);
+        let engine = Engine::new(&config).expect("create component engine");
+
+        let component =
+            verified_component_with_hook(repository.path(), &tool, &engine, |verified_path| {
+                fs::write(verified_path, b"unverified replacement")
+                    .expect("replace artifact after verification");
+            })
+            .expect("compile the bytes that passed verification");
+
+        drop(component);
+        let replacement = fs::read(&artifact_path).expect("read replacement");
+        assert!(
+            wasmtime::component::Component::new(&engine, replacement).is_err(),
+            "the replacement path must not contain a compilable component"
+        );
+    }
+
+    fn workspace_root() -> &'static Path {
+        Path::new(env!("CARGO_MANIFEST_DIR"))
+            .parent()
+            .and_then(Path::parent)
+            .expect("host crate should be nested under the workspace")
     }
 }

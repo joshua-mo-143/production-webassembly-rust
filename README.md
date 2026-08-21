@@ -128,7 +128,7 @@ cargo build --target wasm32-wasip2 \
  -p ch14-normalizer -p ch14-workspace-reader
 cargo build --release --target wasm32-wasip2 -p ch06-guest
 cargo run -p ch14-host -- provision
-cargo test -p ch14-host --test secure_runtime -- --ignored
+cargo test -p ch14-host -- --ignored
 cargo test --workspace
 ```
 

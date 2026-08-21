@@ -43,7 +43,10 @@ marked **TEST ONLY**. `provision` hashes the two built components, signs the
 canonical serialized payload, and writes `target/ch14/manifest.json`. Loading
 first verifies the signature against the separately supplied public key, then
 checks manifest policy, safe relative artefact paths, SHA-256 digests, and WIT
-compatibility. See the pinned
+compatibility. Each component is read exactly once into host-owned memory; the
+host hashes that byte buffer and passes the same buffer to Wasmtime for
+compilation, so replacing the path between verification and compilation cannot
+substitute unverified code. See the pinned
 [Wasmtime v48.0.0 source](https://github.com/bytecodealliance/wasmtime/tree/v48.0.0/crates/wasmtime) and
 [ed25519-dalek 2.2.0 API](https://docs.rs/ed25519-dalek/2.2.0/ed25519_dalek/).
 The implementation references stable GitHub tags for
@@ -58,7 +61,7 @@ and
 | Model emits unexpected JSON, tools, or arguments | Size limit, `deny_unknown_fields`, per-tool schemas, allowlists | A real model remains untrusted and needs the same boundary |
 | Tool asks for ambient filesystem or network access | Empty WASI context or one read-only preopen; no socket grants | WASI/runtime vulnerabilities remain in the trusted computing base |
 | `../`, absolute path, or non-document access | Host accepts only normal relative `.txt` path components; WASI confines lookup to the preopen | Allowed workspace files are intentionally disclosed |
-| Component or manifest is replaced | Ed25519 signature, SHA-256 artefact digest, trusted public-key input, typed WIT instantiation | Test key has no production secrecy; key distribution and rollback protection are deployment concerns |
+| Component or manifest is replaced | Ed25519 signature, SHA-256 artefact digest, compile directly from the verified in-memory bytes, trusted public-key input, typed WIT instantiation | Test key has no production secrecy; key distribution and rollback protection are deployment concerns |
 | Guest loops, allocates excessively, traps, or poisons state | Fuel, store limits, trap-on-growth failure, fresh stores | Fuel is deterministic work accounting, not a wall-clock deadline |
 | Guest returns misleading or hostile output | Host validates identity, lengths, controls, and semantic counts; public output is truncated | Domain-specific validation must evolve with each tool |
 | Errors leak paths, policy, or internals | Public `Display` is always `tool request failed`; structured categories stay internal | Operators must protect telemetry |
@@ -102,7 +105,7 @@ cargo clippy --target wasm32-wasip2 \
 cargo build --target wasm32-wasip2 \
  -p ch14-normalizer -p ch14-workspace-reader
 cargo run -p ch14-host -- provision
-cargo test -p ch14-host --test secure_runtime -- --ignored
+cargo test -p ch14-host -- --ignored
 cargo test --workspace
 ```
 
@@ -120,6 +123,7 @@ guest modules still deny unsafe code through the workspace lint.
 | Malformed JSON, extra fields, traversal, wrong extension | Rejected before component execution |
 | Signed manifest changed | Signature verification rejects load |
 | Component bytes changed | Digest verification rejects load |
+| Component path replaced after digest verification | Previously read, verified bytes still compile; invalid replacement is unused |
 | Fuel loop and oversized allocation | Trapped within the call's fresh store |
 | Semantically invalid/control-character output | Host output validation rejects it |
 | Healthy request after traps | Succeeds in a fresh store |
@@ -130,6 +134,10 @@ guest modules still deny unsafe code through the workspace lint.
   offline; distribute the public key independently of manifests and artefacts.
 - Add expiry, build identity, monotonic version/rollback protection, and an
   atomic release process before production deployment.
+- Verification and compilation are race-free with respect to component
+  contents, but production path resolution should additionally use an
+  OS-specific immutable descriptor strategy such as Linux `openat2` with
+  no-symlink constraints if avoiding every path-resolution race is required.
 - Pin and audit the runtime and cryptographic dependency supply chain. The
   lockfile captures this example's resolved versions but is not a vulnerability
   management process.

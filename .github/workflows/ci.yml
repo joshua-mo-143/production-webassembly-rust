@@ -89,7 +89,7 @@ jobs:
       - name: Run Chapter 14 secure runtime tests
         run: |
           cargo run --locked -p ch14-host -- provision
-          cargo test --locked -p ch14-host --test secure_runtime -- --ignored
+          cargo test --locked -p ch14-host -- --ignored
 
       - name: Run documented examples
         run: |
