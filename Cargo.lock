@@ -217,6 +217,47 @@ dependencies = [
 ]
 
 [[package]]
+name = "ch10-guest"
+version = "0.1.0"
+dependencies = [
+ "wit-bindgen",
+]
+
+[[package]]
+name = "ch10-host"
+version = "0.1.0"
+dependencies = [
+ "anyhow",
+ "wasmtime",
+ "wasmtime-wasi",
+]
+
+[[package]]
+name = "ch11-host"
+version = "0.1.0"
+dependencies = [
+ "anyhow",
+ "sha2",
+ "tempfile",
+ "wasmtime",
+ "wasmtime-wasi",
+]
+
+[[package]]
+name = "ch11-plugin-v1"
+version = "0.1.0"
+dependencies = [
+ "wit-bindgen",
+]
+
+[[package]]
+name = "ch11-plugin-v1-1"
+version = "0.1.0"
+dependencies = [
+ "wit-bindgen",
+]
+
+[[package]]
 name = "chacha20"
 version = "0.10.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"

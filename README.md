@@ -58,7 +58,10 @@ README.
 | 6 | Available | [Data exchange](examples/ch06-data-exchange/) |
 | 7 | Available | [Sandbox limits](examples/ch07-sandbox-limits/) |
 | 8 | Available | [WASI capabilities](examples/ch08-wasi-capabilities/) |
-| 9 onward | Not available | — |
+| 9 | Not available | — |
+| 10 | Available | [Server runtime](examples/ch10-server-runtime/) |
+| 11 | Available | [Plugin system](examples/ch11-plugin-system/) |
+| 12 onward | Not available | — |
 
 ## Repository checks
 
@@ -67,9 +70,11 @@ cargo fmt --all -- --check
 cargo clippy --workspace --all-targets -- -D warnings
 cargo clippy --target wasm32-wasip2 \
  -p ch04-guest -p ch05-guest -p ch06-guest \
- -p ch07-guest -p ch08-guest -- -D warnings
+ -p ch07-guest -p ch08-guest -p ch10-guest \
+ -p ch11-plugin-v1 -p ch11-plugin-v1-1 -- -D warnings
 cargo build --target wasm32-wasip2 \
- -p ch04-guest -p ch05-guest -p ch07-guest -p ch08-guest
+ -p ch04-guest -p ch05-guest -p ch07-guest -p ch08-guest \
+ -p ch10-guest -p ch11-plugin-v1 -p ch11-plugin-v1-1
 cargo build --release --target wasm32-wasip2 -p ch06-guest
 cargo test --workspace
 ```

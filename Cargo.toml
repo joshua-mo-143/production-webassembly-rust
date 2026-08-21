@@ -10,6 +10,11 @@ members = [
     "examples/ch07-sandbox-limits/host",
     "examples/ch08-wasi-capabilities/guest",
     "examples/ch08-wasi-capabilities/host",
+    "examples/ch10-server-runtime/guest",
+    "examples/ch10-server-runtime/host",
+    "examples/ch11-plugin-system/plugin-v1",
+    "examples/ch11-plugin-system/plugin-v1-1",
+    "examples/ch11-plugin-system/host",
 ]
 resolver = "3"
 

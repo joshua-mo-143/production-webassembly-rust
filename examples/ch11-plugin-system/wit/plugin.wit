@@ -1,0 +1,14 @@
+package book:plugin@1.0.0;
+
+world text-plugin {
+    record metadata {
+        name: string,
+        version: string,
+    }
+
+    /// Identifies the implementation so the host can enforce its major policy.
+    export metadata: func() -> metadata;
+
+    /// Applies the plugin. A trap is contained to this invocation and store.
+    export transform: func(input: string) -> string;
+}
