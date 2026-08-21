@@ -1,0 +1,48 @@
+name: CI
+
+on:
+  push:
+  pull_request:
+
+permissions:
+  contents: read
+
+jobs:
+  check:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          components: clippy, rustfmt
+          targets: wasm32-wasip2
+      - uses: Swatinem/rust-cache@v2
+
+      - name: Check formatting
+        run: cargo fmt --all -- --check
+
+      - name: Lint native targets
+        run: cargo clippy --workspace --all-targets -- -D warnings
+
+      - name: Lint component guests
+        run: cargo clippy --target wasm32-wasip2 -p ch04-guest -p ch05-guest -p ch06-guest -- -D warnings
+
+      - name: Build component guests
+        run: |
+          cargo build --target wasm32-wasip2 -p ch04-guest -p ch05-guest
+          cargo build --release --target wasm32-wasip2 -p ch06-guest
+
+      - name: Run workspace tests
+        run: cargo test --workspace
+
+      - name: Run Chapter 5 compatibility test
+        env:
+          CH05_COMPONENT: target/wasm32-wasip2/debug/ch05_guest.wasm
+        run: cargo test -p ch05-host --test compatibility -- --ignored
+
+      - name: Run documented examples
+        run: |
+          cargo run -p ch04-host
+          cargo run -p ch05-host
+          cargo run --release -p ch06-host -- \
+            target/wasm32-wasip2/release/ch06_guest.wasm 100 5

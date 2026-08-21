@@ -1,0 +1,14 @@
+package book:data-exchange@1.0.0;
+
+world analyzer {
+    record sample {
+        timestamp: u64,
+        value: f64,
+    }
+
+    /// Pattern A: descriptive, typed records at the component boundary.
+    export sum-records: func(samples: list<sample>) -> f64;
+
+    /// Pattern B: fixed-width bytes (little-endian u64 then f64 per sample).
+    export sum-packed: func(samples: list<u8>) -> result<f64, string>;
+}

@@ -1,0 +1,6 @@
+package book:stable-api@1.0.0;
+
+world text-processor {
+    export normalize: func(input: string) -> string;
+    export api-version: func() -> string;
+}
