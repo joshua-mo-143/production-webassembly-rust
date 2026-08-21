@@ -56,15 +56,20 @@ README.
 | 4 | Available | [First module](examples/ch04-first-module/) |
 | 5 | Available | [Stable API](examples/ch05-stable-api/) |
 | 6 | Available | [Data exchange](examples/ch06-data-exchange/) |
-| 7 onward | Not available | — |
+| 7 | Available | [Sandbox limits](examples/ch07-sandbox-limits/) |
+| 8 | Available | [WASI capabilities](examples/ch08-wasi-capabilities/) |
+| 9 onward | Not available | — |
 
 ## Repository checks
 
 ```fish
 cargo fmt --all -- --check
 cargo clippy --workspace --all-targets -- -D warnings
-cargo clippy --target wasm32-wasip2 -p ch04-guest -p ch05-guest -p ch06-guest -- -D warnings
-cargo build --target wasm32-wasip2 -p ch04-guest -p ch05-guest
+cargo clippy --target wasm32-wasip2 \
+ -p ch04-guest -p ch05-guest -p ch06-guest \
+ -p ch07-guest -p ch08-guest -- -D warnings
+cargo build --target wasm32-wasip2 \
+ -p ch04-guest -p ch05-guest -p ch07-guest -p ch08-guest
 cargo build --release --target wasm32-wasip2 -p ch06-guest
 cargo test --workspace
 ```

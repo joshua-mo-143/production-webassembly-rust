@@ -6,6 +6,10 @@ members = [
     "examples/ch05-stable-api/host",
     "examples/ch06-data-exchange/guest",
     "examples/ch06-data-exchange/host",
+    "examples/ch07-sandbox-limits/guest",
+    "examples/ch07-sandbox-limits/host",
+    "examples/ch08-wasi-capabilities/guest",
+    "examples/ch08-wasi-capabilities/host",
 ]
 resolver = "3"
 

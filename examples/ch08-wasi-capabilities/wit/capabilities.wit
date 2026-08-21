@@ -1,0 +1,12 @@
+package book:wasi-capabilities@1.0.0;
+
+world capability-reader {
+    /// Reads a file below the one read-only directory granted by the host.
+    export read-allowed: func() -> result<string, string>;
+
+    /// Attempts to read an arbitrary host path that was not preopened.
+    export read-path: func(path: string) -> result<string, string>;
+
+    /// Attempts to write below the read-only preopen.
+    export write-allowed-directory: func() -> result<_, string>;
+}

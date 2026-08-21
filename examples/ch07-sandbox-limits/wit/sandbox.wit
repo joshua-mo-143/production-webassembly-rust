@@ -1,0 +1,15 @@
+package book:sandbox-limits@1.0.0;
+
+world sandboxed-work {
+    /// A small successful call used to prove a fresh store remains usable.
+    export add: func(left: u32, right: u32) -> u32;
+
+    /// CPU-bound work that must be bounded by the host's fuel budget.
+    export burn-fuel: func(iterations: u64) -> u64;
+
+    /// Attempts to retain the requested number of mebibytes.
+    export allocate: func(mebibytes: u32) -> u32;
+
+    /// Deliberately panics so the host can demonstrate trap containment.
+    export fail-deliberately: func();
+}

@@ -25,11 +25,15 @@ jobs:
         run: cargo clippy --workspace --all-targets -- -D warnings
 
       - name: Lint component guests
-        run: cargo clippy --target wasm32-wasip2 -p ch04-guest -p ch05-guest -p ch06-guest -- -D warnings
+        run: >-
+          cargo clippy --target wasm32-wasip2
+          -p ch04-guest -p ch05-guest -p ch06-guest
+          -p ch07-guest -p ch08-guest -- -D warnings
 
       - name: Build component guests
         run: |
-          cargo build --target wasm32-wasip2 -p ch04-guest -p ch05-guest
+          cargo build --target wasm32-wasip2 \
+            -p ch04-guest -p ch05-guest -p ch07-guest -p ch08-guest
           cargo build --release --target wasm32-wasip2 -p ch06-guest
 
       - name: Run workspace tests
@@ -40,9 +44,21 @@ jobs:
           CH05_COMPONENT: target/wasm32-wasip2/debug/ch05_guest.wasm
         run: cargo test -p ch05-host --test compatibility -- --ignored
 
+      - name: Run Chapter 7 containment test
+        env:
+          CH07_COMPONENT: target/wasm32-wasip2/debug/ch07_guest.wasm
+        run: cargo test -p ch07-host --test containment -- --ignored
+
+      - name: Run Chapter 8 capability test
+        env:
+          CH08_COMPONENT: target/wasm32-wasip2/debug/ch08_guest.wasm
+        run: cargo test -p ch08-host --test capabilities -- --ignored
+
       - name: Run documented examples
         run: |
           cargo run -p ch04-host
           cargo run -p ch05-host
           cargo run --release -p ch06-host -- \
             target/wasm32-wasip2/release/ch06_guest.wasm 100 5
+          cargo run -p ch07-host
+          cargo run -p ch08-host
