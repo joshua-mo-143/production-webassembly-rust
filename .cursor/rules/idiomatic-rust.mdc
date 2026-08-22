@@ -1,0 +1,16 @@
+---
+description: Idiomatic Rust for this companion repo — builders, From/TryFrom, no ad-hoc into_x or as-casts
+globs: "**/*.rs"
+alwaysApply: false
+---
+
+# Idiomatic Rust
+
+Follow the `idiomatic-rust` project skill and `~/.cursor/skills/rust-skills` when editing Rust.
+
+- Builders for multi-field policy and limit types (`RequestLimits`, `RuntimePolicy`).
+- Implement `From` / `TryFrom`, not `fn into_x` / ad-hoc conversion helpers.
+- Implement `From`, not `Into`. Accept `impl Into<T>` and `impl AsRef<Path>` at load boundaries.
+- Replace `as` numeric casts with `From` (widening) or `TryFrom` (narrowing).
+- Do not invent builders for two-field test-only DTOs.
+- After Rust edits: `cargo fmt`, `cargo clippy --all-targets -- -D warnings`, `cargo test`.
