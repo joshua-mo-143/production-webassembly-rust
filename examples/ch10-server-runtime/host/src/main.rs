@@ -32,7 +32,7 @@ fn main() -> Result<()> {
         },
     ] {
         let invocation = runtime.invoke(&request);
-        println!("{}", invocation.telemetry.to_json());
+        println!("{}", invocation.telemetry);
         println!(
             "response: status={} body={}",
             invocation.response.status, invocation.response.body

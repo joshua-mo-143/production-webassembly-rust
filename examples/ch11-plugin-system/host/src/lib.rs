@@ -23,6 +23,9 @@ pub const MAX_PLUGIN_OUTPUT_BYTES: usize = 64 * 1024;
 const MAX_METADATA_NAME_BYTES: usize = 64;
 const MAX_METADATA_VERSION_BYTES: usize = 32;
 
+// Keeps the output ceiling the binding constraint. Raised above the memory
+// ceiling, no guest could allocate an output large enough to reach it and the
+// output policy would stop applying.
 const _: () = assert!(MAX_PLUGIN_OUTPUT_BYTES < MEMORY_LIMIT_BYTES);
 
 wasmtime::component::bindgen!({

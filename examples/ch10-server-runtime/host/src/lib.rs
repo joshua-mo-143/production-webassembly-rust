@@ -2,6 +2,7 @@ use std::fmt;
 use std::path::Path;
 
 use anyhow::Result;
+use serde::Serialize;
 use wasmtime::component::{Component, Linker, ResourceTable};
 use wasmtime::{Config, Engine, Store, StoreLimits, StoreLimitsBuilder};
 use wasmtime_wasi::{WasiCtx, WasiCtxBuilder, WasiCtxView, WasiView};
@@ -14,6 +15,9 @@ pub const DEFAULT_MEMORY_LIMIT_BYTES: usize = 4 * 1024 * 1024;
 const MIN_RESPONSE_STATUS: u16 = 200;
 const MAX_RESPONSE_STATUS: u16 = 599;
 
+// Keeps the output ceiling the binding constraint. Raised above the memory
+// ceiling, no guest could allocate a body large enough to reach it and the
+// output policy would stop applying.
 const _: () = assert!(MAX_RESPONSE_BODY_BYTES < DEFAULT_MEMORY_LIMIT_BYTES);
 
 wasmtime::component::bindgen!({
@@ -115,7 +119,7 @@ pub struct PublicResponse {
 }
 
 /// A bounded, low-cardinality telemetry event.
-#[derive(Debug, PartialEq, Eq)]
+#[derive(Debug, PartialEq, Eq, Serialize)]
 pub struct TelemetryEvent {
     pub request_id: u64,
     pub outcome: &'static str,
@@ -123,28 +127,11 @@ pub struct TelemetryEvent {
     pub error_code: Option<&'static str>,
 }
 
+/// Writes the event as one deterministic JSON log line.
 impl fmt::Display for TelemetryEvent {
     fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
-        match self.error_code {
-            Some(code) => write!(
-                formatter,
-                "{{\"request_id\":{},\"outcome\":\"{}\",\"status\":{},\"error_code\":\"{code}\"}}",
-                self.request_id, self.outcome, self.status
-            ),
-            None => write!(
-                formatter,
-                "{{\"request_id\":{},\"outcome\":\"{}\",\"status\":{},\"error_code\":null}}",
-                self.request_id, self.outcome, self.status
-            ),
-        }
-    }
-}
-
-impl TelemetryEvent {
-    /// Returns one deterministic JSON log line.
-    #[must_use]
-    pub fn to_json(&self) -> String {
-        self.to_string()
+        let line = serde_json::to_string(self).map_err(|_| fmt::Error)?;
+        formatter.write_str(&line)
     }
 }
 
@@ -334,7 +321,7 @@ mod tests {
             error_code: Some("component_runtime_failure"),
         };
         assert_eq!(
-            event.to_json(),
+            event.to_string(),
             "{\"request_id\":7,\"outcome\":\"error\",\"status\":503,\
              \"error_code\":\"component_runtime_failure\"}"
         );
