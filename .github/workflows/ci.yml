@@ -9,17 +9,27 @@ permissions:
 
 jobs:
   check:
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04
     env:
       CARGO_PROFILE_DEV_DEBUG: 0
       CARGO_PROFILE_TEST_DEBUG: 0
     steps:
-      - uses: actions/checkout@v4
-      - uses: dtolnay/rust-toolchain@1.97.1
+      - name: Check out repository
+        uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4.2.2
         with:
-          components: clippy, rustfmt
-          targets: wasm32-wasip2
-      - uses: Swatinem/rust-cache@v2
+          persist-credentials: false
+
+      # Must precede the cache step: rust-cache derives its key from the
+      # active rustc, so caching before this would key on the runner default.
+      - name: Install the toolchain pinned by rust-toolchain.toml
+        run: |
+          rustup show active-toolchain || rustup toolchain install
+          rustc --version
+          cargo clippy --version
+          cargo fmt --version
+
+      - name: Cache Rust build data
+        uses: Swatinem/rust-cache@bc2d2e71bd35c5549942babaa51a89c586b981d1 # v2.8.1
 
       - name: Check formatting
         run: cargo fmt --all -- --check
@@ -38,7 +48,7 @@ jobs:
           -p ch11-plugin-v1 -p ch11-plugin-v1-1 -p ch12-guest
           -p ch13-catalog -p ch13-renderer
           -p ch14-normalizer -p ch14-workspace-reader --
-          -D warnings -A clippy::same-length-and-capacity
+          -D warnings
 
       - name: Build component guests
         run: |
