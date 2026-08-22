@@ -1,0 +1,16 @@
+version: 2
+
+# Actions only. Cargo dependencies are deliberately excluded: the book quotes
+# exact program output and pins a Rust toolchain, so dependency bumps need to
+# land alongside a manuscript check rather than arriving automatically.
+updates:
+  - package-ecosystem: github-actions
+    directory: /
+    schedule:
+      interval: monthly
+    commit-message:
+      prefix: "Update"
+    groups:
+      actions:
+        patterns:
+          - "*"
