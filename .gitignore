@@ -1,4 +1,6 @@
 /target/
+/dist/
 /.cache/
+__pycache__/
 *.profraw
 *.wasm.dump
