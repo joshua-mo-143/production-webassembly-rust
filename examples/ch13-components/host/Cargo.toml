@@ -10,5 +10,13 @@ anyhow = "1.0.104"
 wasmtime = { version = "48.0.0", default-features = false, features = ["anyhow", "component-model", "cranelift", "runtime", "std"] }
 wasmtime-wasi = { version = "48.0.0", default-features = false, features = ["p2"] }
 
+# Adaptation is a build-time step, so the adapter and encoder stay out of the
+# runtime dependency set. wit-component is pinned to the version wasmtime 48
+# already resolves, to avoid a second copy in the tree.
+[dev-dependencies]
+sha2 = "0.10.9"
+wasi-preview1-component-adapter-provider = "48.0.0"
+wit-component = "0.254.0"
+
 [lints]
 workspace = true

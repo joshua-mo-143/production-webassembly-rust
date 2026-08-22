@@ -76,6 +76,46 @@ boundary at a time:
 4. Split interfaces into independently replaceable components only after the
    typed contract and error semantics are stable.
 
+### Adapting a WASI 0.1 core module
+
+Step 2 has a runnable fixture. The catalog crate is built a second time for
+`wasm32-wasip1`, which produces a core module rather than a component, and a
+preview1 adapter turns that module into a component satisfying the same
+`catalog-component` world:
+
+```fish
+cargo build --target wasm32-wasip1 -p ch13-catalog
+
+env CH13_CATALOG=target/wasm32-wasip2/debug/ch13_catalog.wasm \
+ CH13_CATALOG_PREVIEW1=target/wasm32-wasip1/debug/ch13_catalog.wasm \
+ CH13_RENDERER=target/wasm32-wasip2/debug/ch13_renderer.wasm \
+ cargo test -p ch13-host --test preview1_adaptation -- --ignored
+```
+
+Expected result:
+
+```text
+test adaptation_is_reproducible_and_the_adapter_is_part_of_the_identity ... ok
+test adapted_preview1_module_matches_the_componentised_guest ... ok
+```
+
+The same guest source reaches the same typed contract by two different routes.
+One is componentised by the `wasm32-wasip2` target; the other is a core module
+adapted afterwards. The test asserts the two routes return identical results
+for every SKU, including both typed error cases, which is the compatibility
+evidence a staged migration needs.
+
+Adaptation runs in-process through `wit-component`, with the adapter bytes
+supplied by `wasi-preview1-component-adapter-provider`. Both are
+`dev-dependencies` pinned in `Cargo.lock`, because adaptation is a build-time
+step rather than a runtime concern, and no external binary or download is
+involved.
+
+The second test records the SHA-256 of the module, the adapter, and the
+resulting component, and asserts that adapting twice produces identical bytes.
+Changing the adapter alone changes the artifact you ship, so its digest belongs
+in the release record alongside the guest's.
+
 ## Caveats
 
 - This demonstrates dynamic composition in a typed host. It does not produce

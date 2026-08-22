@@ -59,6 +59,9 @@ jobs:
             -p ch14-normalizer -p ch14-workspace-reader
           cargo build --release --target wasm32-wasip2 --locked -p ch06-guest
 
+      - name: Build the Chapter 13 preview1 core module
+        run: cargo build --target wasm32-wasip1 --locked -p ch13-catalog
+
       - name: Run workspace tests
         run: cargo test --workspace --locked
 
@@ -98,6 +101,13 @@ jobs:
           CH13_CATALOG: target/wasm32-wasip2/debug/ch13_catalog.wasm
           CH13_RENDERER: target/wasm32-wasip2/debug/ch13_renderer.wasm
         run: cargo test --locked -p ch13-host --test composition -- --ignored
+
+      - name: Run Chapter 13 preview1 adaptation tests
+        env:
+          CH13_CATALOG: target/wasm32-wasip2/debug/ch13_catalog.wasm
+          CH13_CATALOG_PREVIEW1: target/wasm32-wasip1/debug/ch13_catalog.wasm
+          CH13_RENDERER: target/wasm32-wasip2/debug/ch13_renderer.wasm
+        run: cargo test --locked -p ch13-host --test preview1_adaptation -- --ignored
 
       - name: Run Chapter 14 secure runtime tests
         run: |
