@@ -62,7 +62,7 @@ impl From<RequestLimitsBuilder> for RequestLimits {
 }
 
 /// Builds [`RequestLimits`] without a positional constructor.
-#[must_use = "builders do nothing unless you call build()"]
+#[must_use = "a builder has no effect until it is built or converted"]
 #[derive(Clone, Copy, Debug)]
 pub struct RequestLimitsBuilder {
     fuel: u64,

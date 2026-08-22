@@ -130,7 +130,7 @@ impl RuntimePolicy {
 }
 
 /// Builds a closed tool-allowlist and optional workspace grant.
-#[must_use = "builders do nothing unless you call build()"]
+#[must_use = "a builder has no effect until it is built or converted"]
 #[derive(Default)]
 pub struct RuntimePolicyBuilder {
     allowed_tools: BTreeSet<String>,
