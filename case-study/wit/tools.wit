@@ -5,6 +5,7 @@ interface normalizer {
         normalize,
         burn-fuel,
         grow-memory,
+        trap,
         invalid-output,
     }
 

@@ -10,6 +10,7 @@ anyhow = "1.0.104"
 ed25519-dalek = "2.2.0"
 serde = { version = "1.0.229", features = ["derive"] }
 serde_json = "1.0.151"
+serde_json_canonicalizer = "0.3.2"
 sha2 = "0.10.9"
 tempfile = "3.24.0"
 wasmtime = { version = "48.0.0", default-features = false, features = ["anyhow", "component-model", "cranelift", "runtime", "std"] }

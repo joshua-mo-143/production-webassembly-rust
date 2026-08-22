@@ -1,10 +1,9 @@
 use std::fmt;
 use std::path::Path;
 
-use anyhow::Result;
 use serde::Deserialize;
 use wasmtime::component::{Component, Linker, ResourceTable};
-use wasmtime::{Config, Engine, Store, StoreLimits, StoreLimitsBuilder};
+use wasmtime::{Config, Engine, ResourceLimiter, Store, Trap};
 use wasmtime_wasi::{WasiCtx, WasiCtxBuilder, WasiCtxView, WasiView};
 
 const INSTANTIATION_FUEL: u64 = 2_000_000;
@@ -22,9 +21,45 @@ wasmtime::component::bindgen!({
 use exports::book::agent_tools::preprocessing::{Operation, Prepared, Rejection, Request};
 
 struct HostState {
-    limits: StoreLimits,
+    memory_limit_denied: bool,
     table: ResourceTable,
     wasi: WasiCtx,
+}
+
+impl ResourceLimiter for HostState {
+    fn memory_growing(
+        &mut self,
+        _current: usize,
+        desired: usize,
+        _maximum: Option<usize>,
+    ) -> wasmtime::Result<bool> {
+        if desired > MEMORY_LIMIT_BYTES {
+            self.memory_limit_denied = true;
+            return Err(wasmtime::Error::msg("configured memory limit denied"));
+        }
+        Ok(true)
+    }
+
+    fn table_growing(
+        &mut self,
+        _current: usize,
+        _desired: usize,
+        _maximum: Option<usize>,
+    ) -> wasmtime::Result<bool> {
+        Ok(true)
+    }
+
+    fn instances(&self) -> usize {
+        10
+    }
+
+    fn tables(&self) -> usize {
+        10
+    }
+
+    fn memories(&self) -> usize {
+        2
+    }
 }
 
 impl WasiView for HostState {
@@ -44,6 +79,12 @@ impl ToolCredential {
     pub fn for_demo() -> Self {
         Self("host-only-demo-token".to_owned())
     }
+
+    /// Constructs a credential-less test context to exercise capability denial.
+    #[must_use]
+    pub fn without_grant() -> Self {
+        Self(String::new())
+    }
 }
 
 #[derive(Debug, PartialEq, Eq)]
@@ -57,8 +98,12 @@ pub enum BoundaryError {
     MalformedRequest,
     DeniedTool,
     DeniedArguments,
-    ComponentRejected,
-    ResourceLimit,
+    DeniedCapability,
+    FuelExhausted,
+    MemoryLimitDenied,
+    GuestTrap,
+    RuntimeFailure,
+    ComponentDeclaredFailure,
     InvalidComponentOutput,
 }
 
@@ -68,8 +113,12 @@ impl fmt::Display for BoundaryError {
             Self::MalformedRequest => "malformed tool request",
             Self::DeniedTool => "tool is not allowed",
             Self::DeniedArguments => "tool arguments are not allowed",
-            Self::ComponentRejected => "component rejected input",
-            Self::ResourceLimit => "component resource limit exceeded",
+            Self::DeniedCapability => "required host capability is not available",
+            Self::FuelExhausted => "component fuel exhausted",
+            Self::MemoryLimitDenied => "component memory limit denied",
+            Self::GuestTrap => "component trapped",
+            Self::RuntimeFailure => "component runtime failed",
+            Self::ComponentDeclaredFailure => "component rejected input",
             Self::InvalidComponentOutput => "component returned invalid output",
         };
         formatter.write_str(message)
@@ -105,14 +154,16 @@ impl AgentToolBoundary {
     /// # Errors
     ///
     /// Returns an error when runtime setup or component compilation fails.
-    pub fn load(component_path: &Path) -> Result<Self> {
+    pub fn load(component_path: impl AsRef<Path>) -> Result<Self, BoundaryError> {
         let mut config = Config::new();
         config.wasm_component_model(true);
         config.consume_fuel(true);
-        let engine = Engine::new(&config)?;
-        let component = Component::from_file(&engine, component_path)?;
+        let engine = Engine::new(&config).map_err(|_| BoundaryError::RuntimeFailure)?;
+        let component = Component::from_file(&engine, component_path)
+            .map_err(|_| BoundaryError::RuntimeFailure)?;
         let mut linker = Linker::new(&engine);
-        wasmtime_wasi::p2::add_to_linker_sync(&mut linker)?;
+        wasmtime_wasi::p2::add_to_linker_sync(&mut linker)
+            .map_err(|_| BoundaryError::RuntimeFailure)?;
         Ok(Self {
             engine,
             component,
@@ -134,10 +185,12 @@ impl AgentToolBoundary {
         credential: &ToolCredential,
     ) -> Result<ToolResponse, BoundaryError> {
         let request = parse_and_validate(json)?;
+        if credential.0 != "host-only-demo-token" {
+            return Err(BoundaryError::DeniedCapability);
+        }
         let prepared = self
-            .call_component(Operation::Normalize, &request.arguments.query, 0)
-            .map_err(|_| BoundaryError::ResourceLimit)?
-            .map_err(|_rejection| BoundaryError::ComponentRejected)?;
+            .call_component(Operation::Normalize, &request.arguments.query, 0)?
+            .map_err(|_rejection| BoundaryError::ComponentDeclaredFailure)?;
         validate_component_output(&prepared.text, prepared.token_estimate)?;
 
         let raw = execute_local_search(
@@ -153,18 +206,58 @@ impl AgentToolBoundary {
 
     /// Exercises a deliberately expensive guest path without exposing that
     /// control through the accepted tool-request schema.
-    #[must_use]
-    pub fn prove_fuel_limit(&self) -> bool {
+    /// # Errors
+    ///
+    /// Returns the exact component execution classification.
+    pub fn probe_fuel_limit(&self) -> Result<(), BoundaryError> {
         self.call_component(Operation::BurnFuel, "probe", 10_000_000)
-            .is_err()
+            .map(|_| ())
     }
 
     /// Exercises allocation beyond the per-memory limit. As with the fuel
     /// probe, accepted JSON requests cannot select this operation.
-    #[must_use]
-    pub fn prove_memory_limit(&self) -> bool {
+    /// # Errors
+    ///
+    /// Returns the exact component execution classification.
+    pub fn probe_memory_limit(&self) -> Result<(), BoundaryError> {
         self.call_component(Operation::GrowMemory, "probe", 32 * 1024 * 1024)
-            .is_err()
+            .map(|_| ())
+    }
+
+    /// # Errors
+    ///
+    /// Returns the exact component execution classification.
+    pub fn probe_guest_trap(&self) -> Result<(), BoundaryError> {
+        self.call_component(Operation::Trap, "probe", 0).map(|_| ())
+    }
+
+    /// # Errors
+    ///
+    /// Returns the component-declared failure or an execution classification.
+    pub fn probe_component_declared_failure(&self) -> Result<(), BoundaryError> {
+        self.call_component(Operation::Normalize, "", 0)?
+            .map(|_| ())
+            .map_err(|_| BoundaryError::ComponentDeclaredFailure)
+    }
+
+    /// # Errors
+    ///
+    /// Returns invalid output or an earlier exact execution classification.
+    pub fn probe_invalid_output(&self) -> Result<(), BoundaryError> {
+        let prepared = self
+            .call_component(Operation::InvalidOutput, "probe", 0)?
+            .map_err(|_| BoundaryError::ComponentDeclaredFailure)?;
+        validate_component_output(&prepared.text, prepared.token_estimate)
+    }
+
+    /// # Errors
+    ///
+    /// Returns an exact classification if the positive control fails.
+    pub fn probe_healthy_component(&self) -> Result<(), BoundaryError> {
+        let prepared = self
+            .call_component(Operation::Normalize, "healthy probe", 0)?
+            .map_err(|_| BoundaryError::ComponentDeclaredFailure)?;
+        validate_component_output(&prepared.text, prepared.token_estimate)
     }
 
     fn call_component(
@@ -172,34 +265,46 @@ impl AgentToolBoundary {
         operation: Operation,
         text: &str,
         amount: u32,
-    ) -> Result<Result<Prepared, Rejection>> {
-        let limits = StoreLimitsBuilder::new()
-            .memory_size(MEMORY_LIMIT_BYTES)
-            .instances(10)
-            .tables(10)
-            .memories(2)
-            .trap_on_grow_failure(true)
-            .build();
+    ) -> Result<Result<Prepared, Rejection>, BoundaryError> {
         let mut store = Store::new(
             &self.engine,
             HostState {
-                limits,
+                memory_limit_denied: false,
                 table: ResourceTable::new(),
                 wasi: WasiCtxBuilder::new().build(),
             },
         );
-        store.limiter(|state| &mut state.limits);
-        store.set_fuel(INSTANTIATION_FUEL)?;
-        let bindings = AgentToolLogic::instantiate(&mut store, &self.component, &self.linker)?;
-        store.set_fuel(CALL_FUEL)?;
-        Ok(bindings.book_agent_tools_preprocessing().call_preprocess(
-            &mut store,
-            &Request {
-                operation,
-                text: text.to_owned(),
-                amount,
-            },
-        )?)
+        store.limiter(|state| state);
+        store
+            .set_fuel(INSTANTIATION_FUEL)
+            .map_err(|_| BoundaryError::RuntimeFailure)?;
+        let bindings = AgentToolLogic::instantiate(&mut store, &self.component, &self.linker)
+            .map_err(|error| classify_execution_error(&error, &store))?;
+        store
+            .set_fuel(CALL_FUEL)
+            .map_err(|_| BoundaryError::RuntimeFailure)?;
+        bindings
+            .book_agent_tools_preprocessing()
+            .call_preprocess(
+                &mut store,
+                &Request {
+                    operation,
+                    text: text.to_owned(),
+                    amount,
+                },
+            )
+            .map_err(|error| classify_execution_error(&error, &store))
+    }
+}
+
+fn classify_execution_error(error: &wasmtime::Error, store: &Store<HostState>) -> BoundaryError {
+    if store.data().memory_limit_denied {
+        return BoundaryError::MemoryLimitDenied;
+    }
+    match error.downcast_ref::<Trap>() {
+        Some(Trap::OutOfFuel) => BoundaryError::FuelExhausted,
+        Some(_) => BoundaryError::GuestTrap,
+        None => BoundaryError::RuntimeFailure,
     }
 }
 
@@ -254,6 +359,8 @@ fn sanitize_output(raw: &str) -> String {
 
 #[cfg(test)]
 mod tests {
+    use std::fs;
+
     use super::{BoundaryError, parse_and_validate, sanitize_output};
 
     #[test]
@@ -292,5 +399,17 @@ mod tests {
         let clean = sanitize_output(&dirty);
         assert!(!clean.contains('\u{0007}'));
         assert_eq!(clean.chars().count(), 200);
+    }
+
+    #[test]
+    fn component_load_failures_are_classified_as_runtime_failures() {
+        let component =
+            std::env::temp_dir().join(format!("ch12-invalid-{}.wasm", std::process::id()));
+        fs::write(&component, b"not a component").expect("write invalid component");
+        assert_eq!(
+            super::AgentToolBoundary::load(component.as_path()).err(),
+            Some(BoundaryError::RuntimeFailure)
+        );
+        fs::remove_file(component).expect("remove invalid component");
     }
 }

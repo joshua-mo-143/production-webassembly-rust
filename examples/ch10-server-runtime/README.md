@@ -30,7 +30,8 @@ response: status=400 body=request rejected
 response: status=503 body=service temporarily unavailable
 ```
 
-Run the cached-loading, limits, error-mapping, and recovery integration test:
+Run the cached-loading, limits, output-validation, error-mapping, and recovery
+integration test:
 
 ```fish
 env CH10_COMPONENT=target/wasm32-wasip2/debug/ch10_guest.wasm \
@@ -57,6 +58,11 @@ test cached_component_handles_requests_with_fresh_limits ... ok
   cancellation, queue limits, and process-level memory accounting.
 - The store limiter caps each linear memory at 4 MiB and limits selected store
   resources. It does not cap host allocations or total process memory.
+- A successful component result is accepted only when its status is in the
+  final-response range `200..=599`, its UTF-8 body is at most 65,536 bytes,
+  and it contains no control characters other than tab, line feed, or carriage
+  return. The 64 KiB output ceiling is below the configured 4 MiB per-memory
+  ceiling. Validation measures encoded bytes, not Unicode scalar values.
 - Structured events use numeric request IDs and low-cardinality outcome and
   error-code fields. Request paths, bodies, guest errors, and trap details are
   deliberately excluded to avoid logging sensitive or attacker-controlled
@@ -66,11 +72,12 @@ test cached_component_handles_requests_with_fresh_limits ... ok
 
 The component's explicit domain rejection becomes a generic HTTP-style `400`.
 Traps, fuel exhaustion, instantiation failures, and other runtime faults become
-a generic `503`. Internal guest and runtime messages do not enter the public
-response. A production host should retain detailed errors only in access-
-controlled diagnostics, attach trace context, validate component status codes
-and output sizes, and distinguish retryable failures according to its own
-policy.
+a generic `503`. Invalid successful results also become that same generic
+`503`, while bounded internal error codes distinguish invalid status, oversized
+body, and unsafe control-character output. Internal guest output and runtime
+messages do not enter the public response. A production host should retain
+detailed errors only in access-controlled diagnostics, attach trace context,
+and distinguish retryable failures according to its own policy.
 
 This is a synchronous embedding example, not a complete HTTP server, scheduler,
 load balancer, or observability pipeline.

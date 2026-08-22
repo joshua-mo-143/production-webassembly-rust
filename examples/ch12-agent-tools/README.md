@@ -24,8 +24,8 @@ Expected output:
 ```text
 validated tool: local-document-search
 sanitized result: handbook: deployment secrets => Deployments require review. | Never print secrets.
-fuel exhaustion: contained=true
-memory exhaustion: contained=true
+fuel exhaustion: FuelExhausted
+memory denial: MemoryLimitDenied
 external calls: 0
 ```
 
@@ -41,16 +41,20 @@ env CH12_COMPONENT=target/wasm32-wasip2/debug/ch12_guest.wasm \
 Expected result:
 
 ```text
-test result: ok. 3 passed; 0 failed; 0 ignored
+test result: ok. 4 passed; 0 failed; 0 ignored
 test component_resource_exhaustion_is_contained ... ok
+test runtime_failure_is_non_trap_and_healthy_component_still_loads ... ok
 test secure_boundary_rejects_bad_requests_and_executes_allowed_tool ... ok
 ```
 
 The integration tests cover malformed JSON and unknown fields, denied tool
 names, denied document IDs, successful typed component execution, output
-sanitization, deliberate fuel exhaustion, and over-allocation. These expensive
-guest operations are not representable in the accepted JSON schema; they are
-exposed only as test probes on the host API.
+sanitization, deliberate fuel exhaustion, configured memory-limit denial, a
+guest trap, component-declared rejection, invalid component output, a
+deterministic non-trap component-load `RuntimeFailure`, and healthy positive
+controls after both execution and load failures. Probe operations are not
+representable in the accepted JSON schema; they are exposed only through the
+host's test API.
 
 ## Trust boundary
 
@@ -67,8 +71,13 @@ never enters a WIT value.
 
 The host checks the component's normalized text and token estimate before
 executing a deterministic in-memory lookup. It then removes control characters
-and caps the public output. Guest traps and fuel exhaustion become a
-low-detail boundary error.
+and caps the public output. Internally, the boundary keeps exact categories for
+`FuelExhausted`, `MemoryLimitDenied`, `GuestTrap`, `RuntimeFailure`,
+`DeniedCapability`, `ComponentDeclaredFailure`, and
+`InvalidComponentOutput`. Artifact-backed tests assert each category exercised
+by the fixture; the load test establishes `RuntimeFailure` without a trap.
+Healthy controls follow the execution failures and the failed load. A trap
+therefore cannot pass as evidence that invalid output was rejected.
 
 ## Security and operational caveats
 

@@ -29,6 +29,7 @@ mod component {
                     black_box(vec![0_u8; size]);
                     normalized(&request.text)
                 }
+                Operation::Trap => panic!("deliberate guest trap"),
                 Operation::InvalidOutput => Ok(Normalized {
                     text: "\u{0007}".repeat(300),
                     word_count: 99,

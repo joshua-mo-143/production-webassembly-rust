@@ -5,6 +5,8 @@ interface preprocessing {
         normalize,
         burn-fuel,
         grow-memory,
+        trap,
+        invalid-output,
     }
 
     record request {

@@ -19,7 +19,7 @@ fn main() -> Result<()> {
     let v1_directory = prepare_allowlist(&v1_source)?;
     let v1_registry = PluginRegistry::load(
         v1_directory.path(),
-        &v1_directory.path().join("plugins.manifest"),
+        v1_directory.path().join("plugins.manifest"),
     )?;
     println!("verified uppercase 1.0.0 sha256=ok");
     println!("v1 output: {}", v1_registry.invoke("uppercase", "plugin")?);
@@ -31,7 +31,7 @@ fn main() -> Result<()> {
     let v1_1_directory = prepare_allowlist(&v1_1_source)?;
     let v1_1_registry = PluginRegistry::load(
         v1_1_directory.path(),
-        &v1_1_directory.path().join("plugins.manifest"),
+        v1_1_directory.path().join("plugins.manifest"),
     )?;
     println!("verified uppercase 1.1.0 sha256=ok");
     println!(

@@ -6,11 +6,12 @@ visible.
 
 ## Prerequisites
 
-- Current stable Rust (this repository was verified with Rust 1.97.1).
-- The `wasm32-wasip2` standard library:
+- Rust 1.97.1. [`rust-toolchain.toml`](rust-toolchain.toml) is the source of
+  truth and also installs `rustfmt`, `clippy`, and the `wasm32-wasip2` standard
+  library when this repository is used through rustup:
 
   ```fish
-  rustup target add wasm32-wasip2
+  rustup show active-toolchain
   ```
 
   On Arch Linux using the distribution Rust toolchain, install its matching
@@ -120,7 +121,7 @@ cargo clippy --target wasm32-wasip2 \
  -p ch11-plugin-v1 -p ch11-plugin-v1-1 -p ch12-guest \
  -p ch13-catalog -p ch13-renderer \
  -p ch14-normalizer -p ch14-workspace-reader -- \
- -D warnings -A clippy::same-length-and-capacity
+ -D warnings
 cargo build --target wasm32-wasip2 \
  -p ch04-guest -p ch05-guest -p ch07-guest -p ch08-guest \
  -p ch10-guest -p ch11-plugin-v1 -p ch11-plugin-v1-1 \
@@ -139,11 +140,16 @@ CI additionally runs every artifact-backed integration test and each
 deterministic command documented in the example READMEs. The workflow at
 `.github/workflows/ci.yml` is the authoritative complete command list.
 
+CI runs on Ubuntu 24.04. Filesystem containment, symlink, and path-policy tests
+cover Linux behavior only; this repository does not claim that those tests
+establish Windows path or filesystem semantics.
+
 ## Edition and release policy
 
 All crates inherit Rust edition 2024 and a minimum supported Rust version of
-1.97 from the workspace manifest. A change to either value is repository-wide,
-must pass the full CI matrix, and is called out in release notes.
+1.97 from the workspace manifest, while `rust-toolchain.toml` pins builds and
+CI to Rust 1.97.1. A change to either value is repository-wide, must pass the
+full CI matrix, and is called out in release notes.
 
 The `main` branch is the next companion revision. Published book links should
 use an immutable GitHub release tag such as `book-v1.0.0`, not `main`. For each
@@ -156,6 +162,12 @@ book edition or corrected example release:
    that release.
 5. Use tag-pinned `/tree/book-vMAJOR.MINOR.PATCH/...` URLs in published
    material.
+
+The local packaging script and manual artifact workflow are release
+groundwork: they build and attest a bundle but deliberately do not tag, sign,
+or create a GitHub release. See [release/README.md](release/README.md) for the
+artifact layout, checksum and provenance verification, Linux scope, and
+Chapter 14 test-key exclusion.
 
 ## License
 

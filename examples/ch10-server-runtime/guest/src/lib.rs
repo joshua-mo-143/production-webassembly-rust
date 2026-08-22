@@ -1,7 +1,10 @@
 #[cfg(target_arch = "wasm32")]
 #[allow(unsafe_code)]
+#[allow(clippy::same_length_and_capacity)]
 mod component {
     use std::hint::black_box;
+
+    const OVERSIZED_RESPONSE_BYTES: usize = 64 * 1024 + 1;
 
     wit_bindgen::generate!({
         path: "../wit",
@@ -24,6 +27,18 @@ mod component {
                     body: request.body.to_uppercase(),
                 }),
                 "/reject" => Err("request rejected by component".to_owned()),
+                "/invalid-status" => Ok(Response {
+                    status: 199,
+                    body: "invalid status".to_owned(),
+                }),
+                "/unsafe-control" => Ok(Response {
+                    status: 200,
+                    body: "unsafe\u{7f}control".to_owned(),
+                }),
+                "/oversized-output" => Ok(Response {
+                    status: 200,
+                    body: "x".repeat(OVERSIZED_RESPONSE_BYTES),
+                }),
                 _ => Ok(Response {
                     status: 404,
                     body: "not found".to_owned(),

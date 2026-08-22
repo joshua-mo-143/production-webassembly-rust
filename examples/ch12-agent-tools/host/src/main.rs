@@ -14,10 +14,17 @@ fn main() -> Result<()> {
         "sanitized result: {}",
         response.content.replace('\n', " | ")
     );
-    println!("fuel exhaustion: contained={}", boundary.prove_fuel_limit());
     println!(
-        "memory exhaustion: contained={}",
-        boundary.prove_memory_limit()
+        "fuel exhaustion: {:?}",
+        boundary
+            .probe_fuel_limit()
+            .expect_err("probe must exhaust fuel")
+    );
+    println!(
+        "memory denial: {:?}",
+        boundary
+            .probe_memory_limit()
+            .expect_err("probe must exceed memory limit")
     );
     println!("external calls: 0");
     Ok(())

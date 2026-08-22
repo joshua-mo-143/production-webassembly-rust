@@ -38,8 +38,8 @@ fn load_runtime() -> CompositionRuntime {
     let renderer =
         std::env::var("CH13_RENDERER").expect("CH13_RENDERER must name the renderer artifact");
     CompositionRuntime::load(
-        &workspace_relative(Path::new(&catalog)),
-        &workspace_relative(Path::new(&renderer)),
+        workspace_relative(Path::new(&catalog)),
+        workspace_relative(Path::new(&renderer)),
     )
     .expect("both components must satisfy their generated WIT worlds")
 }

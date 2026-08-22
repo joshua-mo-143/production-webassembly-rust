@@ -87,12 +87,14 @@ fn parse_arg(position: usize, default: usize) -> Result<usize> {
     })
 }
 
-#[allow(clippy::cast_precision_loss)]
 fn make_samples(count: usize) -> Vec<Sample> {
     (0..count)
-        .map(|index| Sample {
-            timestamp: u64::try_from(index).expect("sample index fits in u64"),
-            value: index as f64 * 0.25,
+        .map(|index| {
+            let index = u32::try_from(index).expect("sample index fits in u32");
+            Sample {
+                timestamp: u64::from(index),
+                value: f64::from(index) * 0.25,
+            }
         })
         .collect()
 }

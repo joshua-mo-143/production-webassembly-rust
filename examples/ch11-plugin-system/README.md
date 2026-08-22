@@ -56,7 +56,13 @@ plugin-name|artifact.wasm|64-lowercase-hex-sha256
 Names are restricted to ASCII letters, digits, `_`, and `-`. Artifact names
 must be a single `.wasm` filename: absolute paths, nested paths, `..`, and
 symlinks are rejected. Files must resolve directly inside the canonical
-allowlisted directory. Duplicate names and empty manifests fail closed.
+allowlisted directory. Duplicate names and empty manifests fail closed. The
+host opens each manifest once and reads at most 65,537 bytes, rejecting the
+result if it exceeds the 65,536-byte limit. It likewise opens each component
+once and reads at most 8,388,609 bytes, rejecting it if it exceeds the
+8,388,608-byte limit. These checks apply to bytes actually read rather than
+trusting filesystem metadata. The SHA-256 digest and Wasmtime compilation both
+use the same bounded in-memory component buffer.
 
 Both fixture plugins implement the same WIT 1.0 contract. The second reports
 implementation version 1.1.0 and adds compatible behavior without changing the
@@ -68,16 +74,22 @@ component types compatible.
 ## Security and operational caveats
 
 - SHA-256 checks integrity against the supplied manifest; it does not establish
-  publisher identity or trust. Production systems should authenticate a signed
-  manifest or transparency-log record, protect rollback metadata, and secure
-  the provisioning path.
+  publisher identity, authorization, provenance, freshness, rollback
+  protection, or semantic safety. It also proves nothing if an attacker can
+  replace both the artifact and its expected digest. Production systems should
+  authenticate a signed manifest or transparency-log record, protect rollback
+  metadata, and secure the provisioning path.
 - Verification occurs before Wasmtime compiles the bytes. The example copies
   artifacts into temporary allowlisted directories for a deterministic demo.
   Production installers should use atomic, immutable placement and defend
   against filesystem races with platform-appropriate handles and permissions.
 - A trap returns only `plugin invocation failed`; guest and runtime details do
-  not cross the public API. The trapped store is discarded, and a fresh store
-  successfully serves the next call.
+  not cross the public API. Successful transform output is also rejected with
+  that generic error if it exceeds 65,536 UTF-8 bytes or contains control
+  characters other than tab, line feed, or carriage return. Metadata names and
+  versions have respective 64-byte and 32-byte ceilings and reject every
+  control character before identity and version checks. A failed store is
+  discarded, and a fresh store successfully serves the next call.
 - Fuel and a per-memory limit bound selected guest resources. They are not a
   process-wide quota, elapsed-time deadline, admission-control policy, or
   substitute for operating-system isolation.

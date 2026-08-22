@@ -32,6 +32,11 @@ mod component {
                     black_box(allocation);
                     normalize(&input.text)
                 }
+                Operation::Trap => panic!("deliberate guest trap"),
+                Operation::InvalidOutput => Ok(Prepared {
+                    text: "\u{0007}".repeat(300),
+                    token_estimate: 99,
+                }),
             }
         }
     }

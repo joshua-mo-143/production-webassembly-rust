@@ -1,6 +1,7 @@
-use std::collections::BTreeSet;
+use std::collections::{BTreeSet, VecDeque};
 use std::fmt;
 use std::fs;
+use std::io::Read;
 use std::path::{Component as PathComponent, Path, PathBuf};
 use std::sync::Mutex;
 
@@ -9,7 +10,7 @@ use ed25519_dalek::{Signature, Signer, SigningKey, Verifier, VerifyingKey};
 use serde::{Deserialize, Serialize};
 use sha2::{Digest, Sha256};
 use wasmtime::component::{Component, Linker, ResourceTable};
-use wasmtime::{Config, Engine, Store, StoreLimits, StoreLimitsBuilder};
+use wasmtime::{Config, Engine, ResourceLimiter, Store, Trap};
 use wasmtime_wasi::{FsPerms, WasiCtx, WasiCtxBuilder, WasiCtxView, WasiView};
 
 const MANIFEST_VERSION: u32 = 1;
@@ -20,6 +21,12 @@ const MAX_REQUEST_BYTES: usize = 2_048;
 const MAX_TEXT_CHARS: usize = 256;
 const MAX_DOCUMENT_BYTES: usize = 16 * 1024;
 const MAX_OUTPUT_CHARS: usize = 1_024;
+const MAX_PUBLIC_KEY_BYTES: usize = 4 * 1024;
+const MAX_SECRET_KEY_BYTES: usize = 4 * 1024;
+const MAX_MANIFEST_BYTES: usize = 64 * 1024;
+const MAX_COMPONENT_BYTES: usize = 16 * 1024 * 1024;
+pub const EVENT_CAPACITY: usize = 64;
+const SIGNING_DOMAIN: &[u8] = b"production-webassembly-rust/ch14-manifest\0jcs-rfc8785\0v1\0";
 
 mod normalizer_bindings {
     wasmtime::component::bindgen!({
@@ -65,8 +72,27 @@ pub struct ManifestEnvelope {
 pub struct Event {
     pub stage: &'static str,
     pub outcome: &'static str,
-    pub tool: Option<String>,
+    pub tool: Option<ToolIdentity>,
     pub detail: &'static str,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum ToolIdentity {
+    Normalize,
+    WorkspaceRead,
+    Unknown,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct EventSnapshot {
+    pub events: Vec<Event>,
+    pub overwritten: u64,
+}
+
+#[derive(Default)]
+struct EventBuffer {
+    events: VecDeque<Event>,
+    overwritten: u64,
 }
 
 #[derive(Debug, Clone)]
@@ -76,34 +102,64 @@ pub struct RuntimePolicy {
 }
 
 impl RuntimePolicy {
+    pub fn builder() -> RuntimePolicyBuilder {
+        RuntimePolicyBuilder::default()
+    }
+
     #[must_use]
-    pub fn allow_all(workspace_root: &Path) -> Self {
-        Self {
-            allowed_tools: ["normalize", "workspace-read"]
-                .into_iter()
-                .map(str::to_owned)
-                .collect(),
-            workspace_root: Some(workspace_root.to_owned()),
-        }
+    pub fn allow_all(workspace_root: impl AsRef<Path>) -> Self {
+        Self::builder()
+            .allow("normalize")
+            .allow("workspace-read")
+            .workspace_root(workspace_root)
+            .build()
     }
 
     #[must_use]
     pub fn normalize_only() -> Self {
-        Self {
-            allowed_tools: ["normalize"].into_iter().map(str::to_owned).collect(),
-            workspace_root: None,
-        }
+        Self::builder().allow("normalize").build()
     }
 
     #[must_use]
     pub fn without_workspace_grant() -> Self {
-        Self {
-            allowed_tools: ["normalize", "workspace-read"]
-                .into_iter()
-                .map(str::to_owned)
-                .collect(),
-            workspace_root: None,
+        Self::builder()
+            .allow("normalize")
+            .allow("workspace-read")
+            .build()
+    }
+}
+
+/// Builds a closed tool-allowlist and optional workspace grant.
+#[must_use = "builders do nothing unless you call build()"]
+#[derive(Default)]
+pub struct RuntimePolicyBuilder {
+    allowed_tools: BTreeSet<String>,
+    workspace_root: Option<PathBuf>,
+}
+
+impl RuntimePolicyBuilder {
+    pub fn allow(mut self, tool: impl Into<String>) -> Self {
+        self.allowed_tools.insert(tool.into());
+        self
+    }
+
+    pub fn workspace_root(mut self, workspace_root: impl AsRef<Path>) -> Self {
+        self.workspace_root = Some(workspace_root.as_ref().to_owned());
+        self
+    }
+
+    #[must_use]
+    pub fn build(self) -> RuntimePolicy {
+        RuntimePolicy {
+            allowed_tools: self.allowed_tools,
+            workspace_root: self.workspace_root,
         }
+    }
+}
+
+impl From<RuntimePolicyBuilder> for RuntimePolicy {
+    fn from(builder: RuntimePolicyBuilder) -> Self {
+        builder.build()
     }
 }
 
@@ -131,9 +187,12 @@ pub enum RuntimeError {
     DeniedCapability,
     InvalidArguments,
     ArtefactRejected,
-    ResourceLimit,
+    FuelExhausted,
+    MemoryLimitDenied,
+    GuestTrap,
+    RuntimeFailure,
     InvalidOutput,
-    ToolFailure,
+    ComponentDeclaredFailure,
 }
 
 impl fmt::Display for RuntimeError {
@@ -145,9 +204,45 @@ impl fmt::Display for RuntimeError {
 impl std::error::Error for RuntimeError {}
 
 struct HostState {
-    limits: StoreLimits,
+    memory_limit_denied: bool,
     table: ResourceTable,
     wasi: WasiCtx,
+}
+
+impl ResourceLimiter for HostState {
+    fn memory_growing(
+        &mut self,
+        _current: usize,
+        desired: usize,
+        _maximum: Option<usize>,
+    ) -> wasmtime::Result<bool> {
+        if desired > MEMORY_LIMIT_BYTES {
+            self.memory_limit_denied = true;
+            return Err(wasmtime::Error::msg("configured memory limit denied"));
+        }
+        Ok(true)
+    }
+
+    fn table_growing(
+        &mut self,
+        _current: usize,
+        _desired: usize,
+        _maximum: Option<usize>,
+    ) -> wasmtime::Result<bool> {
+        Ok(true)
+    }
+
+    fn instances(&self) -> usize {
+        10
+    }
+
+    fn tables(&self) -> usize {
+        10
+    }
+
+    fn memories(&self) -> usize {
+        2
+    }
 }
 
 impl WasiView for HostState {
@@ -166,7 +261,7 @@ pub struct SecureAgentRuntime {
     normalizer_linker: Linker<HostState>,
     reader_linker: Linker<HostState>,
     policy: RuntimePolicy,
-    events: Mutex<Vec<Event>>,
+    events: Mutex<EventBuffer>,
 }
 
 impl SecureAgentRuntime {
@@ -177,13 +272,17 @@ impl SecureAgentRuntime {
     /// Returns [`RuntimeError::ArtefactRejected`] for invalid signatures,
     /// hashes, paths, interfaces, or components.
     pub fn load(
-        repository_root: &Path,
-        manifest_path: &Path,
-        public_key_path: &Path,
-        policy: RuntimePolicy,
+        repository_root: impl AsRef<Path>,
+        manifest_path: impl AsRef<Path>,
+        public_key_path: impl AsRef<Path>,
+        policy: impl Into<RuntimePolicy>,
     ) -> Result<Self, RuntimeError> {
-        let result = Self::load_verified(repository_root, manifest_path, public_key_path, policy);
-        result.map_err(|_| RuntimeError::ArtefactRejected)
+        Self::load_verified(
+            repository_root.as_ref(),
+            manifest_path.as_ref(),
+            public_key_path.as_ref(),
+            policy.into(),
+        )
     }
 
     fn load_verified(
@@ -191,25 +290,32 @@ impl SecureAgentRuntime {
         manifest_path: &Path,
         public_key_path: &Path,
         policy: RuntimePolicy,
-    ) -> Result<Self> {
+    ) -> Result<Self, RuntimeError> {
+        let manifest = read_bounded(manifest_path, MAX_MANIFEST_BYTES)
+            .map_err(|_| RuntimeError::ArtefactRejected)?;
         let envelope: ManifestEnvelope =
-            serde_json::from_slice(&fs::read(manifest_path).context("read manifest")?)
-                .context("parse manifest")?;
-        verify_envelope(&envelope, public_key_path)?;
-        validate_manifest(&envelope.signed)?;
+            serde_json::from_slice(&manifest).map_err(|_| RuntimeError::ArtefactRejected)?;
+        verify_envelope(&envelope, public_key_path).map_err(|_| RuntimeError::ArtefactRejected)?;
+        validate_manifest(&envelope.signed).map_err(|_| RuntimeError::ArtefactRejected)?;
 
-        let normalizer_entry = manifest_tool(&envelope.signed, "normalize")?;
-        let reader_entry = manifest_tool(&envelope.signed, "workspace-read")?;
+        let normalizer_entry = manifest_tool(&envelope.signed, "normalize")
+            .map_err(|_| RuntimeError::ArtefactRejected)?;
+        let reader_entry = manifest_tool(&envelope.signed, "workspace-read")
+            .map_err(|_| RuntimeError::ArtefactRejected)?;
         let mut config = Config::new();
         config.wasm_component_model(true);
         config.consume_fuel(true);
-        let engine = Engine::new(&config)?;
-        let normalizer = verified_component(repository_root, normalizer_entry, &engine)?;
-        let reader = verified_component(repository_root, reader_entry, &engine)?;
+        let engine = Engine::new(&config).map_err(|_| RuntimeError::RuntimeFailure)?;
+        let normalizer = verified_component(repository_root, normalizer_entry, &engine)
+            .map_err(|_| RuntimeError::ArtefactRejected)?;
+        let reader = verified_component(repository_root, reader_entry, &engine)
+            .map_err(|_| RuntimeError::ArtefactRejected)?;
         let mut normalizer_linker = Linker::new(&engine);
-        wasmtime_wasi::p2::add_to_linker_sync(&mut normalizer_linker)?;
+        wasmtime_wasi::p2::add_to_linker_sync(&mut normalizer_linker)
+            .map_err(|_| RuntimeError::RuntimeFailure)?;
         let mut reader_linker = Linker::new(&engine);
-        wasmtime_wasi::p2::add_to_linker_sync(&mut reader_linker)?;
+        wasmtime_wasi::p2::add_to_linker_sync(&mut reader_linker)
+            .map_err(|_| RuntimeError::RuntimeFailure)?;
 
         let runtime = Self {
             engine,
@@ -218,9 +324,11 @@ impl SecureAgentRuntime {
             normalizer_linker,
             reader_linker,
             policy,
-            events: Mutex::new(Vec::new()),
+            events: Mutex::new(EventBuffer::default()),
         };
-        runtime.typecheck()?;
+        runtime
+            .typecheck()
+            .map_err(|_| RuntimeError::RuntimeFailure)?;
         Ok(runtime)
     }
 
@@ -265,34 +373,72 @@ impl SecureAgentRuntime {
     }
 
     #[must_use]
-    pub fn events(&self) -> Vec<Event> {
-        self.events
+    pub fn events(&self) -> EventSnapshot {
+        let telemetry = self
+            .events
             .lock()
-            .unwrap_or_else(std::sync::PoisonError::into_inner)
-            .clone()
+            .unwrap_or_else(std::sync::PoisonError::into_inner);
+        EventSnapshot {
+            events: telemetry.events.iter().cloned().collect(),
+            overwritten: telemetry.overwritten,
+        }
     }
 
-    #[must_use]
-    pub fn prove_fuel_limit(&self) -> bool {
+    /// # Errors
+    ///
+    /// Returns the exact component execution classification.
+    pub fn probe_fuel_limit(&self) -> Result<(), RuntimeError> {
         self.call_normalizer(normalizer_types::Operation::BurnFuel, "probe", 10_000_000)
-            .is_err()
+            .map(|_| ())
     }
 
-    #[must_use]
-    pub fn prove_memory_limit(&self) -> bool {
+    /// # Errors
+    ///
+    /// Returns the exact component execution classification.
+    pub fn probe_memory_limit(&self) -> Result<(), RuntimeError> {
         self.call_normalizer(
             normalizer_types::Operation::GrowMemory,
             "probe",
             32 * 1024 * 1024,
         )
-        .is_err()
+        .map(|_| ())
     }
 
-    pub fn prove_invalid_output_rejected(&self) -> bool {
-        match self.call_normalizer(normalizer_types::Operation::InvalidOutput, "probe", 0) {
-            Ok(Ok(value)) => validate_normalized(&value.text, value.word_count).is_err(),
-            Ok(Err(_)) | Err(_) => true,
-        }
+    /// # Errors
+    ///
+    /// Returns the exact component execution classification.
+    pub fn probe_guest_trap(&self) -> Result<(), RuntimeError> {
+        self.call_normalizer(normalizer_types::Operation::Trap, "probe", 0)
+            .map(|_| ())
+    }
+
+    /// # Errors
+    ///
+    /// Returns the component-declared failure or an execution classification.
+    pub fn probe_component_declared_failure(&self) -> Result<(), RuntimeError> {
+        self.call_normalizer(normalizer_types::Operation::Normalize, "", 0)?
+            .map(|_| ())
+            .map_err(|_| RuntimeError::ComponentDeclaredFailure)
+    }
+
+    /// # Errors
+    ///
+    /// Returns invalid output or an earlier exact execution classification.
+    pub fn probe_invalid_output(&self) -> Result<(), RuntimeError> {
+        let value = self
+            .call_normalizer(normalizer_types::Operation::InvalidOutput, "probe", 0)?
+            .map_err(|_| RuntimeError::ComponentDeclaredFailure)?;
+        validate_normalized(&value.text, value.word_count)
+    }
+
+    /// # Errors
+    ///
+    /// Returns an exact classification if the positive control fails.
+    pub fn probe_healthy_component(&self) -> Result<(), RuntimeError> {
+        let value = self
+            .call_normalizer(normalizer_types::Operation::Normalize, "healthy probe", 0)?
+            .map_err(|_| RuntimeError::ComponentDeclaredFailure)?;
+        validate_normalized(&value.text, value.word_count)
     }
 
     fn execute_normalize(
@@ -303,9 +449,8 @@ impl SecureAgentRuntime {
             serde_json::from_value(arguments).map_err(|_| RuntimeError::InvalidArguments)?;
         validate_text(&arguments.text)?;
         let output = self
-            .call_normalizer(normalizer_types::Operation::Normalize, &arguments.text, 0)
-            .map_err(|_| RuntimeError::ResourceLimit)?
-            .map_err(|_| RuntimeError::ToolFailure)?;
+            .call_normalizer(normalizer_types::Operation::Normalize, &arguments.text, 0)?
+            .map_err(|_| RuntimeError::ComponentDeclaredFailure)?;
         validate_normalized(&output.text, output.word_count)?;
         Ok(ToolResponse {
             tool: "normalize".to_owned(),
@@ -329,26 +474,43 @@ impl SecureAgentRuntime {
             .workspace_root
             .as_deref()
             .ok_or(RuntimeError::DeniedCapability)?;
-        let (mut store, bindings) = self
-            .instantiate_reader(workspace)
+        let workspace = workspace
+            .canonicalize()
             .map_err(|_| RuntimeError::DeniedCapability)?;
+        let authorized_path = workspace
+            .join(&arguments.path)
+            .canonicalize()
+            .map_err(|_| RuntimeError::DeniedCapability)?;
+        if !authorized_path.starts_with(&workspace) {
+            return Err(RuntimeError::DeniedCapability);
+        }
+        let authorized_bytes = read_bounded(&authorized_path, MAX_DOCUMENT_BYTES)
+            .map_err(|_| RuntimeError::DeniedCapability)?;
+        let authorized_text =
+            std::str::from_utf8(&authorized_bytes).map_err(|_| RuntimeError::InvalidOutput)?;
+        let request_directory = tempfile::tempdir().map_err(|_| RuntimeError::RuntimeFailure)?;
+        fs::write(
+            request_directory.path().join("authorized.txt"),
+            &authorized_bytes,
+        )
+        .map_err(|_| RuntimeError::RuntimeFailure)?;
+        let (mut store, bindings) = self
+            .instantiate_reader(request_directory.path())
+            .map_err(|_| RuntimeError::RuntimeFailure)?;
         store
             .set_fuel(CALL_FUEL)
-            .map_err(|_| RuntimeError::ResourceLimit)?;
+            .map_err(|_| RuntimeError::RuntimeFailure)?;
         let document = bindings
             .book_secure_agent_tools_workspace_reader()
             .call_read(&mut store, &arguments.path)
-            .map_err(|_| RuntimeError::ResourceLimit)?
-            .map_err(|_| RuntimeError::ToolFailure)?;
-        if document.path != arguments.path
-            || document.contents.len() > MAX_DOCUMENT_BYTES
-            || document
-                .contents
-                .chars()
-                .any(|character| character.is_control() && !matches!(character, '\n' | '\r' | '\t'))
-        {
-            return Err(RuntimeError::InvalidOutput);
-        }
+            .map_err(|error| classify_execution_error(&error, &store))?
+            .map_err(|_| RuntimeError::ComponentDeclaredFailure)?;
+        validate_document(
+            &arguments.path,
+            authorized_text,
+            &document.path,
+            &document.contents,
+        )?;
         Ok(ToolResponse {
             tool: "workspace-read".to_owned(),
             content: document.contents.chars().take(MAX_OUTPUT_CHARS).collect(),
@@ -360,10 +522,14 @@ impl SecureAgentRuntime {
         operation: normalizer_types::Operation,
         text: &str,
         amount: u32,
-    ) -> Result<Result<normalizer_types::Normalized, String>> {
-        let (mut store, bindings) = self.instantiate_normalizer()?;
-        store.set_fuel(CALL_FUEL)?;
-        Ok(bindings
+    ) -> Result<Result<normalizer_types::Normalized, String>, RuntimeError> {
+        let (mut store, bindings) = self
+            .instantiate_normalizer()
+            .map_err(|_| RuntimeError::RuntimeFailure)?;
+        store
+            .set_fuel(CALL_FUEL)
+            .map_err(|_| RuntimeError::RuntimeFailure)?;
+        bindings
             .book_secure_agent_tools_normalizer()
             .call_normalize(
                 &mut store,
@@ -372,7 +538,8 @@ impl SecureAgentRuntime {
                     text: text.to_owned(),
                     amount,
                 },
-            )?)
+            )
+            .map_err(|error| classify_execution_error(&error, &store))
     }
 
     fn instantiate_normalizer(
@@ -420,15 +587,41 @@ impl SecureAgentRuntime {
         tool: Option<&str>,
         detail: &'static str,
     ) {
-        self.events
+        let mut telemetry = self
+            .events
             .lock()
-            .unwrap_or_else(std::sync::PoisonError::into_inner)
-            .push(Event {
-                stage,
-                outcome,
-                tool: tool.map(str::to_owned),
-                detail,
-            });
+            .unwrap_or_else(std::sync::PoisonError::into_inner);
+        if telemetry.events.len() == EVENT_CAPACITY {
+            telemetry.events.pop_front();
+            telemetry.overwritten = telemetry.overwritten.saturating_add(1);
+        }
+        telemetry.events.push_back(Event {
+            stage,
+            outcome,
+            tool: tool.map(ToolIdentity::from_name),
+            detail,
+        });
+    }
+}
+
+impl ToolIdentity {
+    fn from_name(name: &str) -> Self {
+        match name {
+            "normalize" => Self::Normalize,
+            "workspace-read" => Self::WorkspaceRead,
+            _ => Self::Unknown,
+        }
+    }
+}
+
+fn classify_execution_error(error: &wasmtime::Error, store: &Store<HostState>) -> RuntimeError {
+    if store.data().memory_limit_denied {
+        return RuntimeError::MemoryLimitDenied;
+    }
+    match error.downcast_ref::<Trap>() {
+        Some(Trap::OutOfFuel) => RuntimeError::FuelExhausted,
+        Some(_) => RuntimeError::GuestTrap,
+        None => RuntimeError::RuntimeFailure,
     }
 }
 
@@ -441,9 +634,12 @@ impl RuntimeError {
             Self::DeniedCapability => "denied-capability",
             Self::InvalidArguments => "invalid-arguments",
             Self::ArtefactRejected => "artefact-rejected",
-            Self::ResourceLimit => "resource-limit",
+            Self::FuelExhausted => "fuel-exhausted",
+            Self::MemoryLimitDenied => "memory-limit-denied",
+            Self::GuestTrap => "guest-trap",
+            Self::RuntimeFailure => "runtime-failure",
             Self::InvalidOutput => "invalid-output",
-            Self::ToolFailure => "tool-failure",
+            Self::ComponentDeclaredFailure => "component-declared-failure",
         }
     }
 }
@@ -500,23 +696,34 @@ fn validate_normalized(text: &str, word_count: u32) -> Result<(), RuntimeError> 
     Ok(())
 }
 
+fn validate_document(
+    authorized_path: &str,
+    authorized_contents: &str,
+    returned_path: &str,
+    returned_contents: &str,
+) -> Result<(), RuntimeError> {
+    if returned_path != authorized_path
+        || returned_contents.len() > MAX_DOCUMENT_BYTES
+        || returned_contents != authorized_contents
+        || returned_contents
+            .chars()
+            .any(|character| character.is_control() && !matches!(character, '\n' | '\r' | '\t'))
+    {
+        return Err(RuntimeError::InvalidOutput);
+    }
+    Ok(())
+}
+
 fn new_store(engine: &Engine, wasi: WasiCtx) -> Result<Store<HostState>> {
-    let limits = StoreLimitsBuilder::new()
-        .memory_size(MEMORY_LIMIT_BYTES)
-        .instances(10)
-        .tables(10)
-        .memories(2)
-        .trap_on_grow_failure(true)
-        .build();
     let mut store = Store::new(
         engine,
         HostState {
-            limits,
+            memory_limit_denied: false,
             table: ResourceTable::new(),
             wasi,
         },
     );
-    store.limiter(|state| &mut state.limits);
+    store.limiter(|state| state);
     store.set_fuel(INSTANTIATION_FUEL)?;
     Ok(store)
 }
@@ -572,7 +779,7 @@ fn verified_component_with_hook(
     if !artifact.starts_with(&root) {
         bail!("artifact escaped repository");
     }
-    let bytes = fs::read(&artifact)?;
+    let bytes = read_bounded(&artifact, MAX_COMPONENT_BYTES)?;
     let digest = hex_encode(&Sha256::digest(&bytes));
     if digest != tool.sha256 {
         bail!("artifact digest mismatch");
@@ -582,7 +789,7 @@ fn verified_component_with_hook(
 }
 
 fn verify_envelope(envelope: &ManifestEnvelope, public_key_path: &Path) -> Result<()> {
-    let public = read_hex_file(public_key_path)?;
+    let public = read_hex_file(public_key_path, MAX_PUBLIC_KEY_BYTES)?;
     let verifying_key = VerifyingKey::from_bytes(
         &public
             .try_into()
@@ -590,8 +797,22 @@ fn verify_envelope(envelope: &ManifestEnvelope, public_key_path: &Path) -> Resul
     )?;
     let signature_bytes = hex_decode(&envelope.signature)?;
     let signature = Signature::from_slice(&signature_bytes)?;
-    verifying_key.verify(&serde_json::to_vec(&envelope.signed)?, &signature)?;
+    verifying_key.verify(&signing_bytes(&envelope.signed)?, &signature)?;
     Ok(())
+}
+
+/// Returns the versioned, domain-separated RFC 8785/JCS bytes signed by
+/// provisioning and verified while loading.
+///
+/// # Errors
+///
+/// Returns an error if the payload cannot be represented by the canonicalizer.
+pub fn signing_bytes(payload: &SignedPayload) -> Result<Vec<u8>> {
+    let canonical = serde_json_canonicalizer::to_vec(payload)?;
+    let mut bytes = Vec::with_capacity(SIGNING_DOMAIN.len() + canonical.len());
+    bytes.extend_from_slice(SIGNING_DOMAIN);
+    bytes.extend_from_slice(&canonical);
+    Ok(bytes)
 }
 
 /// Writes a deterministic, test-only signed manifest for already-built artifacts.
@@ -604,7 +825,7 @@ pub fn provision_test_manifest(
     output: &Path,
     secret_key_path: &Path,
 ) -> Result<()> {
-    let secret = read_hex_file(secret_key_path)?;
+    let secret = read_hex_file(secret_key_path, MAX_SECRET_KEY_BYTES)?;
     let signing_key = SigningKey::from_bytes(
         &secret
             .try_into()
@@ -626,7 +847,7 @@ pub fn provision_test_manifest(
     ]
     .into_iter()
     .map(|(name, interface, artifact, capabilities)| {
-        let bytes = fs::read(repository_root.join(artifact))
+        let bytes = read_bounded(&repository_root.join(artifact), MAX_COMPONENT_BYTES)
             .with_context(|| format!("read {artifact}; build the Wasm tools first"))?;
         Ok(ToolManifest {
             name: name.to_owned(),
@@ -641,7 +862,7 @@ pub fn provision_test_manifest(
         manifest_version: MANIFEST_VERSION,
         tools,
     };
-    let signature = signing_key.sign(&serde_json::to_vec(&signed)?);
+    let signature = signing_key.sign(&signing_bytes(&signed)?);
     let envelope = ManifestEnvelope {
         signed,
         signature: hex_encode(&signature.to_bytes()),
@@ -656,14 +877,26 @@ pub fn provision_test_manifest(
     Ok(())
 }
 
-fn read_hex_file(path: &Path) -> Result<Vec<u8>> {
-    let text = fs::read_to_string(path)?;
+fn read_hex_file(path: &Path, limit: usize) -> Result<Vec<u8>> {
+    let bytes = read_bounded(path, limit)?;
+    let text = std::str::from_utf8(&bytes)?;
     let value = text
         .lines()
         .map(str::trim)
         .find(|line| !line.is_empty() && !line.starts_with('#'))
         .ok_or_else(|| anyhow!("missing hex value"))?;
     hex_decode(value)
+}
+
+fn read_bounded(path: &Path, limit: usize) -> Result<Vec<u8>> {
+    let file = fs::File::open(path)?;
+    let mut bytes = Vec::with_capacity(limit.min(64 * 1024).saturating_add(1));
+    file.take(u64::try_from(limit)?.saturating_add(1))
+        .read_to_end(&mut bytes)?;
+    if bytes.len() > limit {
+        bail!("input exceeds {limit} byte limit");
+    }
+    Ok(bytes)
 }
 
 fn hex_decode(value: &str) -> Result<Vec<u8>> {
@@ -693,12 +926,14 @@ mod tests {
     use std::fs;
     use std::path::Path;
 
+    use ed25519_dalek::{Signer, SigningKey};
     use sha2::{Digest, Sha256};
     use wasmtime::{Config, Engine};
 
     use super::{
-        RuntimeError, ToolManifest, hex_encode, validate_relative_path, validate_text,
-        verified_component_with_hook,
+        MAX_COMPONENT_BYTES, MAX_MANIFEST_BYTES, MAX_PUBLIC_KEY_BYTES, RuntimeError, RuntimePolicy,
+        SecureAgentRuntime, SignedPayload, ToolManifest, hex_encode, read_bounded, signing_bytes,
+        validate_document, validate_relative_path, validate_text, verified_component_with_hook,
     };
 
     #[test]
@@ -724,8 +959,121 @@ mod tests {
     #[test]
     fn public_errors_are_generic() {
         assert_eq!(
-            RuntimeError::ResourceLimit.to_string(),
+            RuntimeError::FuelExhausted.to_string(),
             "tool request failed"
+        );
+    }
+
+    #[test]
+    fn bounded_admission_rejects_oversized_keys_manifests_and_components() {
+        let directory = tempfile::tempdir().expect("create temporary directory");
+        for (name, limit) in [
+            ("public-key", MAX_PUBLIC_KEY_BYTES),
+            ("manifest", MAX_MANIFEST_BYTES),
+            ("component", MAX_COMPONENT_BYTES),
+        ] {
+            let path = directory.path().join(name);
+            fs::write(&path, vec![0_u8; limit + 1]).expect("write oversized fixture");
+            assert!(
+                read_bounded(&path, limit).is_err(),
+                "{name} must be rejected"
+            );
+        }
+    }
+
+    #[test]
+    fn oversized_manifest_is_rejected_by_runtime_loading() {
+        let directory = tempfile::tempdir().expect("create temporary directory");
+        let manifest = directory.path().join("manifest.json");
+        let public_key = directory.path().join("public.hex");
+        fs::write(&manifest, vec![b' '; MAX_MANIFEST_BYTES + 1]).expect("write oversized manifest");
+        fs::write(&public_key, "00").expect("write placeholder key");
+
+        assert_eq!(
+            SecureAgentRuntime::load(
+                directory.path(),
+                manifest,
+                public_key,
+                RuntimePolicy::normalize_only(),
+            )
+            .err(),
+            Some(RuntimeError::ArtefactRejected)
+        );
+    }
+
+    #[test]
+    fn oversized_component_is_rejected_before_compilation() {
+        let repository = tempfile::tempdir().expect("create temporary repository");
+        let artifact_name = "oversized.wasm";
+        let artifact_path = repository.path().join(artifact_name);
+        let bytes = vec![0_u8; MAX_COMPONENT_BYTES + 1];
+        fs::write(&artifact_path, &bytes).expect("write oversized component");
+        let tool = ToolManifest {
+            name: "normalize".to_owned(),
+            interface: "book:secure-agent-tools/normalizer@1.0.0".to_owned(),
+            artifact: artifact_name.to_owned(),
+            sha256: hex_encode(&Sha256::digest(&bytes)),
+            capabilities: Vec::new(),
+        };
+        let mut config = Config::new();
+        config.wasm_component_model(true);
+        let engine = Engine::new(&config).expect("create engine");
+
+        assert!(super::verified_component(repository.path(), &tool, &engine).is_err());
+    }
+
+    #[test]
+    fn malicious_reader_output_cannot_substitute_sibling_contents() {
+        assert_eq!(
+            validate_document(
+                "runbook.txt",
+                "authorized runbook\n",
+                "runbook.txt",
+                "sibling secret\n",
+            ),
+            Err(RuntimeError::InvalidOutput)
+        );
+        assert_eq!(
+            validate_document(
+                "runbook.txt",
+                "authorized runbook\n",
+                "sibling.txt",
+                "authorized runbook\n",
+            ),
+            Err(RuntimeError::InvalidOutput)
+        );
+        assert_eq!(
+            validate_document(
+                "runbook.txt",
+                "authorized runbook\n",
+                "runbook.txt",
+                "authorized runbook\n",
+            ),
+            Ok(())
+        );
+    }
+
+    #[test]
+    fn signing_bytes_and_signature_match_golden_vector() {
+        let payload = SignedPayload {
+            manifest_version: 1,
+            tools: Vec::new(),
+        };
+        let expected = [
+            b"production-webassembly-rust/ch14-manifest\0jcs-rfc8785\0v1\0".as_slice(),
+            br#"{"manifest_version":1,"tools":[]}"#,
+        ]
+        .concat();
+        let bytes = signing_bytes(&payload).expect("canonicalize payload");
+        assert_eq!(bytes, expected);
+
+        let signature = SigningKey::from_bytes(&[7_u8; 32]).sign(&bytes);
+        assert_eq!(
+            hex_encode(&signature.to_bytes()),
+            concat!(
+                "57f3a3681183bdfb422f582e8c09b47d02b0452a3312a66d9f8fbe7ba2ae21c2",
+                "67387a709dc239d86ca35b73b29279eb52640ea7269e38232a172e5f99078306"
+            )
         );
     }
 

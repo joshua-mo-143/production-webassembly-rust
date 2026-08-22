@@ -1,3 +1,4 @@
+use std::fmt;
 use std::path::Path;
 
 use anyhow::Result;
@@ -6,6 +7,14 @@ use wasmtime::{Config, Engine, Store, StoreLimits, StoreLimitsBuilder};
 use wasmtime_wasi::{WasiCtx, WasiCtxBuilder, WasiCtxView, WasiView};
 
 const INSTANTIATION_FUEL: u64 = 2_000_000;
+/// Largest component response body accepted by the host.
+pub const MAX_RESPONSE_BODY_BYTES: usize = 64 * 1024;
+/// Default per-memory ceiling for each request store.
+pub const DEFAULT_MEMORY_LIMIT_BYTES: usize = 4 * 1024 * 1024;
+const MIN_RESPONSE_STATUS: u16 = 200;
+const MAX_RESPONSE_STATUS: u16 = 599;
+
+const _: () = assert!(MAX_RESPONSE_BODY_BYTES < DEFAULT_MEMORY_LIMIT_BYTES);
 
 wasmtime::component::bindgen!({
     path: "../wit",
@@ -34,11 +43,57 @@ pub struct RequestLimits {
     pub memory_bytes: usize,
 }
 
+impl RequestLimits {
+    pub fn builder() -> RequestLimitsBuilder {
+        RequestLimitsBuilder::default()
+    }
+}
+
 impl Default for RequestLimits {
     fn default() -> Self {
+        Self::builder().build()
+    }
+}
+
+impl From<RequestLimitsBuilder> for RequestLimits {
+    fn from(builder: RequestLimitsBuilder) -> Self {
+        builder.build()
+    }
+}
+
+/// Builds [`RequestLimits`] without a positional constructor.
+#[must_use = "builders do nothing unless you call build()"]
+#[derive(Clone, Copy, Debug)]
+pub struct RequestLimitsBuilder {
+    fuel: u64,
+    memory_bytes: usize,
+}
+
+impl Default for RequestLimitsBuilder {
+    fn default() -> Self {
         Self {
-            fuel: 50_000,
-            memory_bytes: 4 * 1024 * 1024,
+            fuel: 2_000_000,
+            memory_bytes: DEFAULT_MEMORY_LIMIT_BYTES,
+        }
+    }
+}
+
+impl RequestLimitsBuilder {
+    pub fn fuel(mut self, fuel: u64) -> Self {
+        self.fuel = fuel;
+        self
+    }
+
+    pub fn memory_bytes(mut self, memory_bytes: usize) -> Self {
+        self.memory_bytes = memory_bytes;
+        self
+    }
+
+    #[must_use]
+    pub fn build(self) -> RequestLimits {
+        RequestLimits {
+            fuel: self.fuel,
+            memory_bytes: self.memory_bytes,
         }
     }
 }
@@ -68,17 +123,28 @@ pub struct TelemetryEvent {
     pub error_code: Option<&'static str>,
 }
 
+impl fmt::Display for TelemetryEvent {
+    fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
+        match self.error_code {
+            Some(code) => write!(
+                formatter,
+                "{{\"request_id\":{},\"outcome\":\"{}\",\"status\":{},\"error_code\":\"{code}\"}}",
+                self.request_id, self.outcome, self.status
+            ),
+            None => write!(
+                formatter,
+                "{{\"request_id\":{},\"outcome\":\"{}\",\"status\":{},\"error_code\":null}}",
+                self.request_id, self.outcome, self.status
+            ),
+        }
+    }
+}
+
 impl TelemetryEvent {
     /// Returns one deterministic JSON log line.
     #[must_use]
     pub fn to_json(&self) -> String {
-        let error = self
-            .error_code
-            .map_or_else(|| "null".to_owned(), |code| format!("\"{code}\""));
-        format!(
-            "{{\"request_id\":{},\"outcome\":\"{}\",\"status\":{},\"error_code\":{error}}}",
-            self.request_id, self.outcome, self.status
-        )
+        self.to_string()
     }
 }
 
@@ -103,12 +169,16 @@ impl ServerRuntime {
     /// # Errors
     ///
     /// Returns an error if the engine, linker, or component cannot be loaded.
-    pub fn load(component_path: &Path, limits: RequestLimits) -> Result<Self> {
+    pub fn load(
+        component_path: impl AsRef<Path>,
+        limits: impl Into<RequestLimits>,
+    ) -> Result<Self> {
+        let limits = limits.into();
         let mut config = Config::new();
         config.wasm_component_model(true);
         config.consume_fuel(true);
         let engine = Engine::new(&config)?;
-        let component = Component::from_file(&engine, component_path)?;
+        let component = Component::from_file(&engine, component_path.as_ref())?;
         let mut linker = Linker::new(&engine);
         wasmtime_wasi::p2::add_to_linker_sync(&mut linker)?;
         Ok(Self {
@@ -123,13 +193,22 @@ impl ServerRuntime {
     #[must_use]
     pub fn invoke(&self, request: &ApplicationRequest<'_>) -> Invocation {
         match self.invoke_inner(request) {
-            Ok(Ok(response)) => invocation(
-                request.request_id,
-                response.status,
-                response.body,
-                "ok",
-                None,
-            ),
+            Ok(Ok(response)) => match PublicResponse::try_from(response) {
+                Ok(response) => invocation(
+                    request.request_id,
+                    response.status,
+                    response.body,
+                    "ok",
+                    None,
+                ),
+                Err(error) => invocation(
+                    request.request_id,
+                    503,
+                    "service temporarily unavailable".to_owned(),
+                    "error",
+                    Some(error.code()),
+                ),
+            },
             Ok(Err(_guest_message)) => invocation(
                 request.request_id,
                 400,
@@ -179,6 +258,49 @@ impl ServerRuntime {
     }
 }
 
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum InvalidComponentOutput {
+    Status,
+    BodyTooLarge,
+    UnsafeControl,
+}
+
+impl InvalidComponentOutput {
+    const fn code(self) -> &'static str {
+        match self {
+            Self::Status => "component_output_invalid_status",
+            Self::BodyTooLarge => "component_output_too_large",
+            Self::UnsafeControl => "component_output_unsafe_control",
+        }
+    }
+}
+
+impl TryFrom<Response> for PublicResponse {
+    type Error = InvalidComponentOutput;
+
+    fn try_from(response: Response) -> Result<Self, Self::Error> {
+        if !(MIN_RESPONSE_STATUS..=MAX_RESPONSE_STATUS).contains(&response.status) {
+            return Err(InvalidComponentOutput::Status);
+        }
+        if response.body.len() > MAX_RESPONSE_BODY_BYTES {
+            return Err(InvalidComponentOutput::BodyTooLarge);
+        }
+        if has_unsafe_control(&response.body) {
+            return Err(InvalidComponentOutput::UnsafeControl);
+        }
+        Ok(Self {
+            status: response.status,
+            body: response.body,
+        })
+    }
+}
+
+fn has_unsafe_control(value: &str) -> bool {
+    value
+        .chars()
+        .any(|character| character.is_control() && !matches!(character, '\t' | '\n' | '\r'))
+}
+
 fn invocation(
     request_id: u64,
     status: u16,
@@ -199,7 +321,9 @@ fn invocation(
 
 #[cfg(test)]
 mod tests {
-    use super::TelemetryEvent;
+    use super::{
+        InvalidComponentOutput, MAX_RESPONSE_BODY_BYTES, PublicResponse, Response, TelemetryEvent,
+    };
 
     #[test]
     fn structured_log_is_stable_and_low_cardinality() {
@@ -213,6 +337,41 @@ mod tests {
             event.to_json(),
             "{\"request_id\":7,\"outcome\":\"error\",\"status\":503,\
              \"error_code\":\"component_runtime_failure\"}"
+        );
+    }
+
+    #[test]
+    fn response_validation_is_byte_bounded_and_rejects_unsafe_controls() {
+        let oversized = Response {
+            status: 200,
+            body: "é".repeat(MAX_RESPONSE_BODY_BYTES / 2 + 1),
+        };
+        assert_eq!(
+            PublicResponse::try_from(oversized).expect_err("oversized body must fail"),
+            InvalidComponentOutput::BodyTooLarge
+        );
+        assert_eq!(
+            PublicResponse::try_from(Response {
+                status: 199,
+                body: String::new(),
+            })
+            .expect_err("informational status must fail"),
+            InvalidComponentOutput::Status
+        );
+        assert_eq!(
+            PublicResponse::try_from(Response {
+                status: 200,
+                body: "unsafe\u{7f}".to_owned(),
+            })
+            .expect_err("unsafe control must fail"),
+            InvalidComponentOutput::UnsafeControl
+        );
+        assert!(
+            PublicResponse::try_from(Response {
+                status: 200,
+                body: "tabs\tand\nlines\r\nare allowed".to_owned(),
+            })
+            .is_ok()
         );
     }
 }

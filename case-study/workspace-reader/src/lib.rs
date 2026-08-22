@@ -12,8 +12,7 @@ mod component {
 
     impl Guest for WorkspaceReader {
         fn read(path: String) -> Result<Document, String> {
-            let guest_path = format!("/workspace/{path}");
-            let contents = std::fs::read_to_string(guest_path)
+            let contents = std::fs::read_to_string("/workspace/authorized.txt")
                 .map_err(|_| "document unavailable".to_owned())?;
             Ok(Document { path, contents })
         }

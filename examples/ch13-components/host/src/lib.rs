@@ -59,16 +59,16 @@ impl CompositionRuntime {
     /// # Errors
     ///
     /// Returns an error if either artifact is not a compatible component.
-    pub fn load(catalog_path: &Path, renderer_path: &Path) -> Result<Self> {
+    pub fn load(catalog_path: impl AsRef<Path>, renderer_path: impl AsRef<Path>) -> Result<Self> {
         let mut config = Config::new();
         config.wasm_component_model(true);
         config.consume_fuel(true);
         let engine = Engine::new(&config)?;
         let mut linker = Linker::new(&engine);
         wasmtime_wasi::p2::add_to_linker_sync(&mut linker)?;
-        let catalog = Component::from_file(&engine, catalog_path)
+        let catalog = Component::from_file(&engine, catalog_path.as_ref())
             .map_err(|error| anyhow::anyhow!("catalog interface mismatch: {error}"))?;
-        let renderer = Component::from_file(&engine, renderer_path)
+        let renderer = Component::from_file(&engine, renderer_path.as_ref())
             .map_err(|error| anyhow::anyhow!("renderer interface mismatch: {error}"))?;
         let runtime = Self {
             engine,

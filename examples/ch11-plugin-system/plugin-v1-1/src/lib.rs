@@ -1,5 +1,6 @@
 #[cfg(target_arch = "wasm32")]
 #[allow(unsafe_code)]
+#[allow(clippy::same_length_and_capacity)]
 mod component {
     wit_bindgen::generate!({
         path: "../wit",

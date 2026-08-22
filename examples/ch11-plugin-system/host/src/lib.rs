@@ -1,6 +1,7 @@
 use std::collections::BTreeMap;
 use std::fmt;
-use std::fs;
+use std::fs::{self, File};
+use std::io::Read;
 use std::path::{Component as PathComponent, Path};
 
 use anyhow::{Context, Result, ensure};
@@ -11,8 +12,18 @@ use wasmtime_wasi::{WasiCtx, WasiCtxBuilder, WasiCtxView, WasiView};
 
 const SUPPORTED_MAJOR: u64 = 1;
 const INSTANTIATION_FUEL: u64 = 2_000_000;
-const INVOCATION_FUEL: u64 = 100_000;
+const INVOCATION_FUEL: u64 = 2_000_000;
 const MEMORY_LIMIT_BYTES: usize = 4 * 1024 * 1024;
+/// Largest accepted manifest, measured in bytes.
+pub const MAX_MANIFEST_BYTES: usize = 64 * 1024;
+/// Largest accepted component artifact, measured in bytes.
+pub const MAX_COMPONENT_BYTES: usize = 8 * 1024 * 1024;
+/// Largest successful transform output, measured in bytes.
+pub const MAX_PLUGIN_OUTPUT_BYTES: usize = 64 * 1024;
+const MAX_METADATA_NAME_BYTES: usize = 64;
+const MAX_METADATA_VERSION_BYTES: usize = 32;
+
+const _: () = assert!(MAX_PLUGIN_OUTPUT_BYTES < MEMORY_LIMIT_BYTES);
 
 wasmtime::component::bindgen!({
     path: "../wit",
@@ -73,7 +84,12 @@ impl PluginRegistry {
     /// Returns an error for malformed manifests, path escapes, symlinks,
     /// digest mismatches, duplicate names, incompatible components, or runtime
     /// setup failures.
-    pub fn load(allowlisted_directory: &Path, manifest_path: &Path) -> Result<Self> {
+    pub fn load(
+        allowlisted_directory: impl AsRef<Path>,
+        manifest_path: impl AsRef<Path>,
+    ) -> Result<Self> {
+        let allowlisted_directory = allowlisted_directory.as_ref();
+        let manifest_path = manifest_path.as_ref();
         let allowed = allowlisted_directory
             .canonicalize()
             .context("allowlisted plugin directory does not exist")?;
@@ -85,8 +101,10 @@ impl PluginRegistry {
         let engine = Engine::new(&config)?;
         let mut linker = Linker::new(&engine);
         wasmtime_wasi::p2::add_to_linker_sync(&mut linker)?;
+        let manifest_bytes = read_bounded(manifest_path, MAX_MANIFEST_BYTES, "plugin manifest")
+            .context("could not read plugin manifest")?;
         let manifest =
-            fs::read_to_string(manifest_path).context("could not read plugin manifest")?;
+            String::from_utf8(manifest_bytes).context("plugin manifest is not valid UTF-8")?;
         let mut plugins = BTreeMap::new();
 
         for (index, line) in manifest.lines().enumerate() {
@@ -122,7 +140,7 @@ impl PluginRegistry {
                 canonical.parent() == Some(allowed.as_path()),
                 "plugin artifact escaped the allowlisted directory"
             );
-            let bytes = fs::read(&canonical)?;
+            let bytes = read_bounded(&canonical, MAX_COMPONENT_BYTES, "plugin component")?;
             ensure!(
                 sha256_hex(&bytes) == expected_digest,
                 "SHA-256 verification failed for plugin {name}"
@@ -132,6 +150,8 @@ impl PluginRegistry {
             })?;
             let reported = inspect_metadata(&engine, &linker, &component)
                 .with_context(|| format!("plugin {name} metadata failed"))?;
+            validate_metadata(&reported)
+                .with_context(|| format!("plugin {name} metadata is invalid"))?;
             ensure!(
                 reported.name == name,
                 "plugin identity does not match manifest"
@@ -205,7 +225,65 @@ fn invoke_component(
 ) -> Result<String> {
     let (mut store, bindings) = instantiate(engine, linker, component)?;
     store.set_fuel(INVOCATION_FUEL)?;
-    Ok(bindings.call_transform(&mut store, input)?)
+    let output = bindings.call_transform(&mut store, input)?;
+    validate_text(
+        &output,
+        MAX_PLUGIN_OUTPUT_BYTES,
+        "plugin output exceeds byte limit",
+        "plugin output contains unsafe control characters",
+    )?;
+    Ok(output)
+}
+
+fn read_bounded(path: &Path, limit: usize, description: &str) -> Result<Vec<u8>> {
+    let file = File::open(path)?;
+    let read_limit = u64::try_from(limit)
+        .expect("configured byte limits fit in u64")
+        .saturating_add(1);
+    let mut bytes = Vec::with_capacity(limit.min(64 * 1024));
+    file.take(read_limit).read_to_end(&mut bytes)?;
+    ensure!(
+        bytes.len() <= limit,
+        "{description} exceeds {limit}-byte limit"
+    );
+    Ok(bytes)
+}
+
+fn validate_metadata(metadata: &Metadata) -> Result<()> {
+    ensure!(
+        metadata.name.len() <= MAX_METADATA_NAME_BYTES,
+        "plugin metadata name exceeds byte limit"
+    );
+    ensure!(
+        !metadata.name.chars().any(char::is_control),
+        "plugin metadata name contains control characters"
+    );
+    ensure!(
+        metadata.version.len() <= MAX_METADATA_VERSION_BYTES,
+        "plugin metadata version exceeds byte limit"
+    );
+    ensure!(
+        !metadata.version.chars().any(char::is_control),
+        "plugin metadata version contains control characters"
+    );
+    Ok(())
+}
+
+fn validate_text(
+    value: &str,
+    max_bytes: usize,
+    length_error: &str,
+    control_error: &str,
+) -> Result<()> {
+    ensure!(value.len() <= max_bytes, "{length_error}");
+    ensure!(!has_unsafe_control(value), "{control_error}");
+    Ok(())
+}
+
+fn has_unsafe_control(value: &str) -> bool {
+    value
+        .chars()
+        .any(|character| character.is_control() && !matches!(character, '\t' | '\n' | '\r'))
 }
 
 fn instantiate(
@@ -274,7 +352,8 @@ mod tests {
     use std::fs;
 
     use super::{
-        PluginRegistry, parse_major, sha256_hex, valid_digest, valid_filename, valid_name,
+        MAX_METADATA_NAME_BYTES, Metadata, PluginRegistry, parse_major, sha256_hex, valid_digest,
+        valid_filename, valid_name, validate_metadata,
     };
 
     #[test]
@@ -296,6 +375,31 @@ mod tests {
     }
 
     #[test]
+    fn metadata_is_length_bounded_and_control_safe() {
+        let oversized = Metadata {
+            name: "x".repeat(MAX_METADATA_NAME_BYTES + 1),
+            version: "1.0.0".to_owned(),
+        };
+        assert!(
+            validate_metadata(&oversized)
+                .expect_err("oversized metadata must fail")
+                .to_string()
+                .contains("name exceeds byte limit")
+        );
+
+        let unsafe_control = Metadata {
+            name: "uppercase".to_owned(),
+            version: "1.0\u{7f}.0".to_owned(),
+        };
+        assert!(
+            validate_metadata(&unsafe_control)
+                .expect_err("control characters must fail")
+                .to_string()
+                .contains("version contains control")
+        );
+    }
+
+    #[test]
     fn sha256_matches_known_vector() {
         assert_eq!(
             sha256_hex(b"abc"),
@@ -313,7 +417,7 @@ mod tests {
         )
         .expect("manifest fixture should be written");
 
-        let error = PluginRegistry::load(directory.path(), &manifest)
+        let error = PluginRegistry::load(directory.path(), manifest)
             .err()
             .expect("path traversal must fail closed");
         assert!(error.to_string().contains("invalid manifest entry"));

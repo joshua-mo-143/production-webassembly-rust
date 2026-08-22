@@ -8,7 +8,7 @@ fn main() -> Result<()> {
         || PathBuf::from("target/wasm32-wasip2/debug/ch10_guest.wasm"),
         PathBuf::from,
     );
-    let runtime = ServerRuntime::load(&component_path, RequestLimits::default())?;
+    let runtime = ServerRuntime::load(component_path, RequestLimits::default())?;
     println!("component_cache: compiled=1");
 
     for request in [

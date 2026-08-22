@@ -47,12 +47,18 @@ fn run_demo(root: &Path) -> Result<()> {
     println!("normalize: {}", normalized.content);
     println!("workspace-read: {}", document.content.trim());
     println!(
-        "limits: fuel={} memory={} invalid-output={}",
-        runtime.prove_fuel_limit(),
-        runtime.prove_memory_limit(),
-        runtime.prove_invalid_output_rejected()
+        "classifications: fuel={:?} memory={:?} invalid-output={:?}",
+        runtime
+            .probe_fuel_limit()
+            .expect_err("fuel probe must fail"),
+        runtime
+            .probe_memory_limit()
+            .expect_err("memory probe must fail"),
+        runtime
+            .probe_invalid_output()
+            .expect_err("invalid output must fail")
     );
-    println!("structured-events: {}", runtime.events().len());
+    println!("structured-events: {}", runtime.events().events.len());
     println!("network-calls: 0");
     Ok(())
 }
