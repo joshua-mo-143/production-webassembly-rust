@@ -11,7 +11,7 @@ fn main() -> Result<()> {
     let runtime = ServerRuntime::load(component_path, RequestLimits::default())?;
     println!("component_cache: compiled=1");
 
-    for request in [
+    let requests = vec![
         ApplicationRequest {
             request_id: 1,
             path: "/uppercase",
@@ -30,7 +30,9 @@ fn main() -> Result<()> {
             body: "bounded",
             work: 10_000_000,
         },
-    ] {
+    ];
+
+    for request in requests {
         let invocation = runtime.invoke(&request);
         println!("{}", invocation.telemetry);
         println!(

@@ -6,8 +6,9 @@ Development-branch repository link:
 `ServerRuntime::load` compiles the component once into Wasmtime's in-memory
 `Component` representation. Every request reuses that cached compiled component
 and linker but receives a fresh store with its own fuel and memory limits. The
-example invokes requests directly instead of opening a socket, so runs and
-tests terminate deterministically and require no external service.
+default binary invokes requests directly and terminates deterministically. A
+second `ch10-http-server` binary exposes the same runtime over a bounded HTTP
+adapter.
 
 Run all commands from the repository root.
 
@@ -30,18 +31,62 @@ response: status=400 body=request rejected
 response: status=503 body=service temporarily unavailable
 ```
 
-Run the cached-loading, limits, output-validation, error-mapping, and recovery
-integration test:
+## Run over HTTP
+
+Start the second host artifact:
 
 ```fish
-env CH10_COMPONENT=target/wasm32-wasip2/debug/ch10_guest.wasm \
+cargo run -p ch10-host --bin ch10-http-server
+```
+
+It listens on `127.0.0.1:3000`. From another terminal, invoke the component
+through the HTTP adapter:
+
+```fish
+curl --fail-with-body \
+ --data 'server component' \
+ http://127.0.0.1:3000/uppercase
+```
+
+`--fail-with-body` makes curl exit non-zero for an HTTP error response while
+still printing its body, so the command works as both a demonstration and a
+smoke test.
+
+Expected response body:
+
+```text
+SERVER COMPONENT
+```
+
+Press Ctrl-C to stop the server. To select another loopback port:
+
+```fish
+env CH10_BIND_ADDR 127.0.0.1:3001 \
+ cargo run -p ch10-host --bin ch10-http-server
+```
+
+The optional first positional argument remains the component path:
+
+```fish
+cargo run -p ch10-host --bin ch10-http-server -- \
+ target/wasm32-wasip2/debug/ch10_guest.wasm
+```
+
+Run the cached-loading, limits, output-validation, error-mapping, recovery, and
+real TCP integration tests:
+
+```fish
+env CH10_COMPONENT target/wasm32-wasip2/debug/ch10_guest.wasm \
  cargo test -p ch10-host --test server_runtime -- --ignored
+env CH10_COMPONENT target/wasm32-wasip2/debug/ch10_guest.wasm \
+ cargo test -p ch10-host --test http_server -- --ignored
 ```
 
 Expected result:
 
 ```text
 test cached_component_handles_requests_with_fresh_limits ... ok
+test component_is_invoked_over_http ... ok
 ```
 
 ## Architecture and operations
@@ -53,6 +98,13 @@ test cached_component_handles_requests_with_fresh_limits ... ok
   unsafe contract. This example stays on the safe bytecode-loading API.
 - Every invocation instantiates a fresh store. Stores are not shared across
   concurrent requests or reused after a trap.
+- The HTTP adapter accepts only `POST`, rejects request bodies larger than
+  64 KiB before component invocation, requires UTF-8, and admits at most 16
+  component invocations concurrently. Saturation fails closed with a generic
+  `503`.
+- Wasmtime invocation is synchronous, so the Axum handler moves it to Tokio's
+  blocking pool. The semaphore bounds admitted blocking work; disconnecting an
+  HTTP client does not cancel an invocation which has already started.
 - Fuel bounds guest execution deterministically; it is not a wall-clock
   deadline. A real server should combine fuel with epoch interruption,
   cancellation, queue limits, and process-level memory accounting.
@@ -79,5 +131,7 @@ messages do not enter the public response. A production host should retain
 detailed errors only in access-controlled diagnostics, attach trace context,
 and distinguish retryable failures according to its own policy.
 
-This is a synchronous embedding example, not a complete HTTP server, scheduler,
-load balancer, or observability pipeline.
+The second binary is a working HTTP server, but it is still a teaching
+artifact rather than a deployable edge service. It has no TLS, authentication,
+distributed rate limiting, request deadline, load balancer integration, or
+production observability pipeline.

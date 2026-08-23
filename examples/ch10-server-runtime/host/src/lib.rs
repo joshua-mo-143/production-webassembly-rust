@@ -7,6 +7,8 @@ use wasmtime::component::{Component, Linker, ResourceTable};
 use wasmtime::{Config, Engine, Store, StoreLimits, StoreLimitsBuilder};
 use wasmtime_wasi::{WasiCtx, WasiCtxBuilder, WasiCtxView, WasiView};
 
+pub mod http;
+
 const INSTANTIATION_FUEL: u64 = 2_000_000;
 /// Largest component response body accepted by the host.
 pub const MAX_RESPONSE_BODY_BYTES: usize = 64 * 1024;
@@ -221,6 +223,7 @@ impl ServerRuntime {
             .memories(2)
             .trap_on_grow_failure(true)
             .build();
+
         let mut store = Store::new(
             &self.engine,
             HostState {
@@ -229,6 +232,7 @@ impl ServerRuntime {
                 wasi: WasiCtxBuilder::new().build(),
             },
         );
+
         store.limiter(|state| &mut state.limits);
         store.set_fuel(INSTANTIATION_FUEL)?;
         let bindings = ServerHandler::instantiate(&mut store, &self.component, &self.linker)?;

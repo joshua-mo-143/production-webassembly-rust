@@ -80,10 +80,12 @@ jobs:
           CH08_COMPONENT: target/wasm32-wasip2/debug/ch08_guest.wasm
         run: cargo test --locked -p ch08-host --test capabilities -- --ignored
 
-      - name: Run Chapter 10 server runtime test
+      - name: Run Chapter 10 server runtime tests
         env:
           CH10_COMPONENT: target/wasm32-wasip2/debug/ch10_guest.wasm
-        run: cargo test --locked -p ch10-host --test server_runtime -- --ignored
+        run: |
+          cargo test --locked -p ch10-host --test server_runtime -- --ignored
+          cargo test --locked -p ch10-host --test http_server -- --ignored
 
       - name: Run Chapter 11 plugin system tests
         env:
