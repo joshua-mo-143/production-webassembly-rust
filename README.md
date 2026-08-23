@@ -7,8 +7,8 @@ visible.
 ## Prerequisites
 
 - Rust 1.97.1. [`rust-toolchain.toml`](rust-toolchain.toml) is the source of
-  truth and also installs `rustfmt`, `clippy`, and the `wasm32-wasip2` standard
-  library when this repository is used through rustup:
+  truth and also installs `rustfmt`, `clippy`, and the `wasm32-wasip1` and
+  `wasm32-wasip2` standard libraries when this repository is used through rustup:
 
   ```fish
   rustup show active-toolchain
@@ -31,13 +31,17 @@ visible.
 No standalone Wasmtime CLI or `cargo-component` installation is required. The
 guests use stable Rust's native WASI 0.2 target and the hosts embed Wasmtime.
 
-Confirm that Cargo can see the target before building:
+Confirm that Cargo can see both targets before building:
 
 ```fish
-set wasm_target_libdir (rustc --print target-libdir --target wasm32-wasip2)
-test -d "$wasm_target_libdir"
-and echo "wasm32-wasip2 is installed"
-or echo "wasm32-wasip2 is missing"
+for target in wasm32-wasip1 wasm32-wasip2
+    set wasm_target_libdir (rustc --print target-libdir --target $target)
+    if test -d "$wasm_target_libdir"
+        echo "$target is installed"
+    else
+        echo "$target is missing"
+    end
+end
 ```
 
 ## Quick start
@@ -128,6 +132,7 @@ cargo build --target wasm32-wasip2 \
  -p ch12-guest -p ch13-catalog -p ch13-renderer \
  -p ch14-normalizer -p ch14-workspace-reader
 cargo build --release --target wasm32-wasip2 -p ch06-guest
+cargo build --target wasm32-wasip1 -p ch13-catalog
 cargo run -p ch14-host -- provision
 cargo test -p ch14-host -- --ignored
 cargo test --workspace

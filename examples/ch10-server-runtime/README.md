@@ -61,7 +61,7 @@ SERVER COMPONENT
 Press Ctrl-C to stop the server. To select another loopback port:
 
 ```fish
-env CH10_BIND_ADDR 127.0.0.1:3001 \
+env CH10_BIND_ADDR=127.0.0.1:3001 \
  cargo run -p ch10-host --bin ch10-http-server
 ```
 
@@ -76,9 +76,9 @@ Run the cached-loading, limits, output-validation, error-mapping, recovery, and
 real TCP integration tests:
 
 ```fish
-env CH10_COMPONENT target/wasm32-wasip2/debug/ch10_guest.wasm \
+env CH10_COMPONENT=target/wasm32-wasip2/debug/ch10_guest.wasm \
  cargo test -p ch10-host --test server_runtime -- --ignored
-env CH10_COMPONENT target/wasm32-wasip2/debug/ch10_guest.wasm \
+env CH10_COMPONENT=target/wasm32-wasip2/debug/ch10_guest.wasm \
  cargo test -p ch10-host --test http_server -- --ignored
 ```
 
