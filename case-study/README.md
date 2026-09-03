@@ -154,6 +154,11 @@ an artifact-backed `RuntimeFailure` assertion.
 
 ## Operational caveats
 
+[`RUNBOOK.md`](RUNBOOK.md) holds the incident procedures for a deployment of
+this runtime, including which of them can be rehearsed against the tests in
+this repository. It assumes controls listed as absent below, so read these
+caveats first.
+
 - Replace both test keys and the provisioning process. Keep the signing key
   offline; distribute the public key independently of manifests and artefacts.
 - Add expiry, build identity, monotonic version/rollback protection, and an
